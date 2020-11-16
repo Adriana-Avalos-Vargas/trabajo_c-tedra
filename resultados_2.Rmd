@@ -1,0 +1,1901 @@
+---
+title: "Resultados sobre la Estimación del PIB municipal quinquenal."
+author: "Adriana Avalos Vargas"
+date: "31/8/2020"
+output: 
+    word_document:
+        toc: yes
+toc-title: Contenido
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE)
+```
+
+## Los datos
+
+Las variables que se utilizarán para este trabajo son:
+
+* PIB: Producto interno bruto estatal de los años 1994, 1999, 2004, 2009 y 2014 disponibles en el sitio web del INEGI [https://www.inegi.org.mx/sistemas/bie/].
+
+* PBT: ES la variable que se utiliza para denotar a la Producción bruta total, que se define como el valor de todos los bienes y servicios producidos o comercializados por la unidad económica como resultado del ejercicio de sus actividades, comprendiendo el valor de los productos elaborados; el margen bruto de comercialización; las obras ejecutadas; los ingresos por la prestación de servicios, así como el alquiler de maquinaria y equipo, y otros bienes muebles e inmuebles; el valor de los activos fijos producidos para uso propio, entre otros. Incluye: la variación de existencias de productos en proceso. Los bienes y servicios se valoran a precios productor.
+
+* VACB: Se refiere al valor agregado censal bruto y se define como el valor de la producción que se añade durante el proceso de trabajo por la actividad creadora y de transformación del personal ocupado, el capital y la organización (factores de la producción), ejercida sobre los materiales que se consumen en la realización de la actividad económica. Aritméticamente, el Valor Agregado Censal Bruto (VACB) resulta de restar a la Producción Bruta Total el Consumo Intermedio. Se le llama bruto porque no se le ha deducido el consumo de capital fijo. Se dispone de información de ésta variable en los censos económicos de 1994, 1999, 2004, 2009, 2014 y 2019.
+
+* FBC: Es el acrónimo de la formación bruta de capital fijo, que es el valor de los activos fijos comprados por la unidad económica (hayan sido nacionales o importados, nuevos o usados), menos el valor de las ventas de activos fijos realizadas. Incluye: como parte de las compras de activos fijos, el valor de las renovaciones, mejoras y reformas mayores realizadas a los activos fijos que prolongaron su vida útil en más de un año o aumentaron su productividad, y los activos fijos producidos por la unidad económica para uso propio. Se dispone de información de ésta variable en los censos económicos de 1994, 1999, 2004, 2009, 2014 y 2019.
+
+* INV: Es la inversión total y se define como el incremento en activos, insumos y productos que experimentaron las unidades económicas durante el año de referencia. Se obtiene sumando a la Formación Bruta de Capital Fijo la variación de Existencias. Se dispone de información de ésta variable en los censos económicos de 2004, 2009, 2014 y 2019
+
+* POT: Es el personal ocupado total y comprende a todas las personas que trabajaron durante el periodo de referencia dependiendo contractualmente o no de la unidad económica, sujetas a su dirección y control.Se dispone de información de ésta variable en los censos económicos de 1994, 1999, 2004, 2009, 2014 y 2019.
+
+## La disponibilidad y las unidades de los datos
+
+Primero se averiguaron algunas características de los datos, como por ejemplo la estadística básica, o de resumen, esto fue de utilidad para determinar si era necesario estandarizar los datos para garantizar que todas las variables se midieran en miles de pesos de un año determinado, exceptuando la población. A continuación, se presenta la estadística de resumen a escala estatal de algunas variables del censo económico, por cada uno de los años disponibles del censo.
+
+```{r}
+#Directorios
+base_o <- "C:/Users/avalo/OneDrive/Documentos/PIB_MUNI/codigos_finales/original_sources"
+base_m <- "C:/Users/avalo/OneDrive/Documentos/PIB_MUNI/codigos_finales/modified_sources"
+res_rl <- "C:/Users/avalo/OneDrive/Documentos/PIB_MUNI/codigos_finales/resultados_rl"
+res_sur <- "C:/Users/avalo/OneDrive/Documentos/PIB_MUNI/codigos_finales/resultados_sur"
+
+#Librerías
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(outliers)
+require(car)
+library(nortest)
+library(GGally)
+library(corrplot)
+library(systemfit)
+require(plm)
+```
+
+```{r}
+#data_explore 
+#15:60
+setwd(base_o)
+####################################################################################################
+#Llamamos a las bases de datos
+pib <- read.csv("pib_est.csv",header = TRUE,stringsAsFactors = FALSE)
+saic_e <- read.csv("saic_est.csv",header = TRUE, stringsAsFactors = FALSE)
+saic_m <- read.csv("saic_mun.csv",header = TRUE, stringsAsFactors = FALSE)
+
+#Unimos el PIB estatal con los censos económicos estatales
+#Primero quitamos na´s
+aux <- merge(saic_e, pib, by=c("id_edo", "anio"), all.x = TRUE)
+
+#Nos quedamos con nacionales
+saic_n <- subset(aux, aux$id_edo ==0)
+
+
+############################################################################################
+#Unimos los datos estatales
+
+saic_e <- subset(saic_e, saic_e$id_edo !=0)
+#Filtramos el PIB por los años censales
+
+
+#Creamos un vector con los años de los censos
+target <- unique(saic_e$anio)
+
+#Filtramos el PIB de acuerdo a los años
+entidades <- pib %>% filter(anio %in% target)
+
+#Unimos con la base del saic estatal
+entidades <- merge(entidades, saic_e, by=c("id_edo", "anio"), all.y = TRUE)
+
+#Seleccionamos las columnas de interes
+entidades <- entidades[,c("id_edo", "Entidad.y", "PIB","POT","PBT","VACB", "FBC", "INV", "anio")]
+
+#Renombramos columnas
+colnames(entidades)<- c("id_edo", "Entidad", "PIB","POT","PBT","VACB", "FBC", "INV", "anio")
+
+
+#Sacamos el resumen a escala estatal por anio
+library(reshape2)
+aux <- melt(entidades, id.vars=c(1,2,9))
+
+aux2 <- aux %>% group_by(anio,variable) %>% 
+  summarise(mini=min(value, na.rm = TRUE), Q1 =quantile(value, na.rm = TRUE)[[2]], 
+            mediana = median(value,na.rm = TRUE), media=mean(value, na.rm = TRUE),
+            Q3= quantile(value, na.rm=TRUE)[[4]],
+            maxi = max(value,na.rm=TRUE), NA_s=sum(is.na(value)))
+
+knitr::kable(aux2, digits = 4, caption ="Tabla 1. Resumen estadístico estatal")
+
+```
+
+Se debe observar que para 1994 y 1999 no se tiene disponible la variable INV a escala estatal, por esta razón la variable será desechada. Además, por el momento no se tiene disponible el PIB para 2019 por lo que este año no se podrá utilizar en la estimación. 
+
+Por otro lado, se presenta a escala municipal la estadística de resumen de los censos económicos, pero sin la variable INV, con el fin de conocer su comportamiento a dicha escala.
+
+```{r}
+#data explore 62:73
+#Datos municipales
+#Borramos
+rm(list = c("aux", "aux2", "entidades"))
+
+#Quitamos la variable inversión
+saic_m <- saic_m[,-c(10)]
+#Sacamos el resumen a escala municipal por anio
+aux <- melt(saic_m, id.vars = c(1:5,10))
+aux2 <- aux %>% group_by(anio,variable) %>% 
+  summarise(mini=min(value, na.rm = TRUE), Q1 =quantile(value, na.rm = TRUE)[[2]], 
+            mediana = median(value,na.rm = TRUE), media=mean(value, na.rm = TRUE),
+            Q3=quantile(value, na.rm=TRUE)[[4]],maxi=max(value,na.rm=TRUE), NA_s=sum(is.na(value)))
+
+knitr::kable(aux2, digits = 4, caption = "Tabla 2.Resumen estadísitico municipal")
+
+```
+
+
+De esta última tabla se observa que las variables VACB y FBC tienen valores negativos para algunos municipios en todos los años. Por ello, por ahora, estas variables se descartan pues la función de producción requiere que las variables independientes sean positivas. En otras palabras, sólo se utilizaran dos variables en la función de Cobb-Douglas, a saber la POT y la PBT (al menos hasta que se encuentre una estrategia para transformar estas cantidades a variables con valores positivas distintas de cero).
+
+Otra característica de las variables que es importante notar es que la PBT y el PIB no tienen unidades estandarizadas. En particular la PBT para cada año censal esta referida a diferentes pesos de acuerdo al año censal (pesos corrientes). Además, el PIB se encuentra en pesos constantes del 2013. También, están en diferentes magnitudes (miles o millones de pesos).Dicha información se presenta en la siguiente tabla.
+
+```{r}
+#graficas_transformación 1:30
+#Gráficas y tablas de la transformación de los datos
+#Directorio
+#Fijamos directorio
+setwd(base_m)
+
+#Leemos datos estatales en millones de 2013
+estados <- read.csv("estatal_millones_2013.csv", header = T, stringsAsFactors = F)
+
+#Ordenamos con un melt cambiamos pib y pot a avariables
+aux <- melt(estados, id.vars=c(1:4,8:10))
+
+#Quitamos el 2019
+aux <- subset(aux, aux$anio != 2019)
+
+#Graficamos
+aux2 <- ggplot(data=aux, aes(x="", y=value, color=as.factor(anio)))+
+  geom_boxplot()+ xlab("")+ylab("Millones de pesos 2013 y Personal ocupado")+
+  stat_summary(fun =mean, geom="point", shape=23, size=4)+
+  theme(legend.position="none", plot.title = element_text(size = 9)) +
+  ggtitle("G1: Gráfica de las variables de censo económico estatal")+
+  facet_grid(variable~anio,scales = "free_y" )
+
+aux2
+
+
+#Borramos cosas
+rm(list = c("aux", "aux2", "estados"))
+```
+
+En la gráfica G1 se manifiesta que las variables del censo a escala estatal tiene un rago de variación muy amplio y a pesar de que ya se uniformizaron las variables monetarias aún es necesario uniformizar las unidades de la POT y del resto de las variables. 
+
+Similarmente, al transformar las variables a escala municipal, se puede observar el comportamiento de las variables transformadas  en las gráficas de caja (G2).
+
+```{r}
+#graficas_transformación 33:54
+#Gráfica municipal millones 2013
+setwd(base_m)
+#Llamamos la bd
+municipio <- read.csv("municipios_millones_2013.csv", header = TRUE, stringsAsFactors = FALSE)
+
+#Ordenamos con un melt cambiamos pib y pot a avariables
+aux <- melt(municipio, id.vars=c(1:6,9:11))
+
+#Quitamos el 2019
+aux <- subset(aux, aux$anio != 2019)
+
+#Graficamos
+aux2 <- ggplot(data=aux, aes(x="", y=value, color=as.factor(anio)))+
+  geom_boxplot()+ xlab("")+ylab("Millones de pesos 2013 y Personal ocupado")+
+  stat_summary(fun =mean, geom="point", shape=23, size=4)+
+  theme(legend.position="none", plot.title = element_text(size = 9)) +
+  ggtitle("G2: Gráfica de las variables de censo económico estatal")+
+  facet_grid(variable~anio,scales = "free_y" )
+
+aux2
+
+rm(list = c("aux", "aux2", "municipio"))
+
+
+```
+
+De esta forma los datos ya están en las mismas unidades (millones de pesos y personas, según la variable) y en el año base 2013. Además, se observa en la gráfica a escala estatal y municipal que hay varios datos atípicos y la distribución de los datos no es la óptima. 
+
+Una última transformación que se realizó sobre los datos es convertirlas a variables adimensionales,pues el rango de la variable POT es varias veces menor al rango de las variables monetarias y esto podría sesgar la regresión. Existen varias formas de lograrlo, como por ejemplo convertirlo a una proporción dividiendo entre el máximo o utilizando la transformación max-min. En este caso se propone utilizar la estandarización por proporciones,  es decir, cada variable independiente se reescribirá como:
+
+$$w_{i} = \frac{x_{i}}{max(x_{i})},$$
+
+donde $w_{i}$ representa la i-ésima variable estandarizada, $x_{i}$ la i-ésima variable sin estandarizar, y max es la función máximo. En la siguiente imagen se muestra, a través de una gráfica de dispersión los cambios de las variables al realizar dicha transformación. Sólo se muestran los resultados a escala estatal (G3).
+
+```{r}
+#Gráficas dispersión variable transformadas a w
+
+setwd(base_m)
+
+#Leemos datos estatales en millones de 2013
+estados <- read.csv("estados_trans_max.csv", header = T, stringsAsFactors = F)
+
+#Ordenamos con un melt cambiamos pib y pot a avariables
+aux <- melt(estados, id.vars=c(1:5,8:10))
+
+#Quitamos el 2019
+aux <- subset(aux, aux$anio != 2019)
+#Graficamos
+despues <-ggplot(data=aux, aes(x=value, y=PIBw))+
+  geom_point()+
+  theme(plot.title = element_text(size = 9))+
+  ggtitle("G3. Gráfica de dispersión de las variables transformadas a escala estatal ")+
+  facet_grid(anio~variable, scales = "free_x")
+
+despues
+```
+
+A escala municipal, el resultado de la transformación se presenta en las siguientes gráficas de cajas (G4).
+
+```{r}
+#Gráficas dispersión variable transformadas a w municipales
+
+setwd(base_m)
+
+municipios <- read.csv("municipios_trans_max.csv", header = T, stringsAsFactors = F)
+
+#Graficamos
+#Reordenamos el df
+aux <- melt(municipios, id.vars = c(1:6, 9:11))
+
+#QUITAMOS 2019
+aux <- subset(aux, aux$anio != 2019)
+
+#Graficamos
+despues <-ggplot(data=aux, aes(x="", y=value, color=as.factor(anio)))+
+  geom_boxplot()+ xlab("")+ylab("Millones de pesos 2013 y Personal ocupado")+
+  theme(legend.position="none", plot.title = element_text(size = 9)) +
+  ggtitle("G4. Gráfica de las variables transformadas del censo económico municipal")+
+  facet_grid(variable~anio,scales = "free_y" )
+
+#Presentamos las gráficas unidas
+despues
+
+
+rm(list = c("aux", "despues","municipios"))
+```
+
+
+## Alistando los datos para las regresiones (Análisis exploratorio de datos).
+
+La regresión lineal (mínimos cuadrados o datos tipo panel) se realiza sobre los logaritmos naturales de cada una de las variables, es decir:
+
+$$ln(PIB) = ln(A)+\sum_{i=1}^{3}\alpha_{i}ln(x_{i})+\epsilon,$$
+
+si se definen las variables considerando $ln(PIB)=pib$, $ln(A)=a$, $ln(x_{i})=z_{i}$, donde las $z_{i}$ representan al $ln(PBT)=pbt$ y al $ln(POT)=pot$ la ecuación anterior se rescribe como:
+
+$$pib = a+\sum_{i=1}^{3}\alpha_{i}z_{i}+\epsilon.$$
+
+Para garantizar que los datos $pib$, $pbt$ y $pot$ son de utilidad para realizar una regresión se deben verificar varios supuestos, iniciando por la inspección de la existencia de valores atípicos. Para ello, se realiza una gráfica de Cleveland en la que en el eje de las abscisas se grafica el orden de los datos ordenados de menor a mayor de acuerdo al valor del pib y en el eje de las ordenadas se grafican los valores de las variables. En la gráfica se inspeccionan las nubes de puntos y se determina si algunos puntos se comportan fuera de la tendencia. Dichas gráficas se muestran en la siguiente gráfica (G5).
+
+```{r}
+#analisis_exploratorio 11:31
+#Directorio
+setwd(base_m)
+
+#Llamamos a las bases de datos estatales
+estados_lw <- read.csv("estados_trans_ln.csv", header = T, stringsAsFactors = F)
+
+#Quitamos 2019
+estados_lw <- subset(estados_lw, estados_lw$anio != 2019)
+
+estados_lw <- estados_lw[,c("anio", "id_edo", "Entidad.x", "pib", "pot", "pbt")]
+
+aux <- estados_lw[order(estados_lw$anio, estados_lw$pib),]
+
+aux$orden_datos <- rep(1:32, times=5)
+
+aux <- melt(aux, id.vars = c(1:3,7))
+
+ggplot(aux, aes(x=orden_datos, y=value))+
+  geom_point()+
+  ggtitle("Gráfica de Cleveland de los datos")+
+  facet_grid(variable~anio)
+
+```
+
+Como se puede observar la variable pib tiene al menos un valor candidato a valor atípico. La variable pot tiene dos datos que en todos los años se desvian al lado inferior derecho que podrían ser también candidatos a outliers. También, se observa que la variable pbt probablemente no contenga valores atípicos pero si una gran dispersión.  
+Otras gráficas que nos ayudaran a determinar, al menos visualmente, la existencia de outliers son las gráficas de cajas que se presentan a continuación
+
+
+```{r}
+#analisis_exploratorio 36:41
+#Gráfica de cajas
+
+ggplot(aux, aes(X="", y=value))+
+  geom_boxplot()+
+  ggtitle("Gráficas de cajas para las variables pib, pbt y pot")+
+  facet_grid(anio~variable)
+
+```
+
+De la comparación de las gráficas de Cleveland y de las de cajas y bigotes se observa que seguramente un dato en todos los años se comporta como valor atípico (el valor de cero), por lo que es probable que éste valor influya en la regresión. Para asegurarnos sobre la existencia de outlier se realiza una prueba estadística, especificamente la prueba de Grubbs. Para ello, se utiliza la librería *outliers* y la función *grubbs.test*. Esta función realiza la prueba de Grubbs que tiene como propósito detectar valores atípicos La prueba de Grubbs (Grubbs 1969 y Stefansky 1972) se utiliza para detectar un valor atípico único en un conjunto de datos univariados que sigue una distribución aproximadamente normal. La prueba de Grubbs también se conoce como la prueba residual normalizada máxima.
+
+La prueba de Grubbs se define para la hipótesis:
+
+* H0: no hay valores atípicos en el conjunto de datos
+
+* Ha: hay exactamente un valor atípico en el conjunto de datos
+
+Estadística de prueba: la estadística de prueba de Grubbs se define como:
+
+$$G = \frac{max | Y_{i} − Y¯ |}{s},$$
+
+con $Y¯$ la media muestral y $s$ la desviación estándar. .El estadístico de prueba de Grubbs es la mayor desviación absoluta de la media muestral en unidades de la desviación estándar muestral.
+Esta es la versión de dos colas de la prueba.  En la siguiente tabla se muestra el resultado de la prueba
+
+```{r}
+rm(list = c("aux"))
+
+
+ppib <- list()
+ppbt <- list()
+ppot <- list()
+target <- unique(estados_lw$anio)
+
+
+for (i in 1:5) {
+  # i=1
+  aux <- subset(estados_lw, estados_lw$anio == target[[i]])
+  ppib[[i]] <- grubbs.test(aux$pib, type = 10, opposite = FALSE, two.sided = TRUE)
+  ppbt[[i]] <- grubbs.test(aux$pbt, type = 10, opposite = FALSE, two.sided = TRUE)
+  ppot[[i]] <- grubbs.test(aux$pot, type = 10, opposite = FALSE, two.sided = TRUE)
+  
+}
+
+#Generamos un cuadro de resultados
+
+#pvalue
+
+pib_p_value <- c(ppib[[1]]$p.value, ppib[[2]]$p.value, ppib[[3]]$p.value, ppib[[4]]$p.value, 
+                 ppib[[5]]$p.value)
+
+pbt_p_value <- c(ppbt[[1]]$p.value, ppbt[[2]]$p.value, ppbt[[3]]$p.value, ppbt[[4]]$p.value, 
+                 ppbt[[5]]$p.value)
+
+pot_p_value <- c(ppot[[1]]$p.value, ppot[[2]]$p.value, ppot[[3]]$p.value, ppot[[4]]$p.value, 
+                 ppot[[5]]$p.value)
+
+
+#estadisticos
+pib_est <- rbind.data.frame(ppib[[1]]$statistic, ppib[[2]]$statistic, ppib[[3]]$statistic, ppib[[4]]$statistic, 
+                            ppib[[5]]$statistic)
+
+pbt_est <- rbind.data.frame(ppbt[[1]]$statistic, ppbt[[2]]$statistic, ppbt[[3]]$statistic, ppbt[[4]]$statistic, 
+                            ppbt[[5]]$statistic)
+
+pot_est <- rbind.data.frame(ppot[[1]]$statistic, ppot[[2]]$statistic, ppot[[3]]$statistic, ppot[[4]]$statistic, 
+                            ppot[[5]]$statistic)
+
+colnames(pib_est)<-c("G","U")
+colnames(pbt_est)<-c("G","U")
+colnames(pot_est)<-c("G","U")
+#ha
+
+pib_ha <- c(ppib[[1]]$alternative , ppib[[2]]$alternative, ppib[[3]]$alternative, ppib[[4]]$alternative, 
+            ppib[[5]]$alternative)
+
+pbt_ha <- c(ppbt[[1]]$alternative, ppbt[[2]]$alternative, ppbt[[3]]$alternative, ppbt[[4]]$alternative, 
+            ppbt[[5]]$alternative)
+
+pot_ha <- c(ppot[[1]]$alternative, ppot[[2]]$alternative, ppot[[3]]$alternative, ppot[[4]]$alternative, 
+            ppot[[5]]$alternative)
+#Unimos
+
+Ppib <- cbind.data.frame(target, pib_est, pib_p_value, pib_ha)
+
+Ppbt <- cbind.data.frame(target, pbt_est, pbt_p_value, pbt_ha)
+
+Ppot <- cbind.data.frame(target, pot_est, pot_p_value, pot_ha)
+
+
+knitr::kable(Ppib, caption = "Tabla 4.Resultados de las prueba de Grubbs del pib en cada año del censo")
+
+knitr::kable(Ppbt, caption = "Tabla 5.Resultados de las prueba de Grubbs de la pbt en cada año del censo")
+
+knitr::kable(Ppot, caption = "Tabla 6.Resultados de las prueba de Grubbs de la pot en cada año del censo")
+
+rm(list = c("aux", "i" , "pbt_est", "pbt_ha", "pbt_p_value", "pib_est", "pib_ha", "pib_p_value",
+            "pot_est", "pot_ha", "pot_p_value", "ppbt", "Ppbt", "ppib", "Ppib", "ppot", "Ppot",
+            "target"  ))
+
+```
+
+
+Por lo que, parece que estadísticamente, no hay evidencia significativa de la existencia de outliers en el pib o en la pot. Sin embargo, en la pbt parece que hay un valor muy pequeño y que podría pensarse que es un outlier.
+
+Otra cosa que se puede observar de las gráficas de cajas es que la varianza de las variables en cada año no es igual, pero si es muy parecida. La mediana es muy similar para cada variable, no siendo así para el ancho de la caja. Lo anterior se observa en la siguiente tabla en la que se presenta la media, la mediana y la varianza de las variables respuesta e independientes.
+
+```{r}
+#analisis_exploratorio 118:123
+
+aux <- melt(estados_lw, id.vars = 1:3)
+
+a <- aux %>% group_by(anio, variable) %>% summarise(mediana = median(value), media=mean(value), varianza=var(value), desv_est=sd(value))
+
+knitr::kable(a, caption = "Tabla 7.Medidas de centralidad y varianza")
+
+rm(list=c("a","aux"))
+```
+
+De acuerdo a Zuur et al 2010, la homocedasticidad, homogeneidad o similaridad de varianzas, es una de las propiedades más importantes para algunos de los métodos inferenciales paramétricos, pues es una condición muy importante para realizar análisis de varianza (ANOVA), técnicas de regresión, análisis discriminante, entre otras. R ofrece varias funciones para contrastar la igualdad de varianza de dos o más poblaciones. Dichas funciones son: var.test, bartlett.test, leveneTest, flinger.test. Las últimas dos contenidas en la paquetería car. Se realiza la prueba de Fligner-Killeen, que es una prueba no paramétrica robusta contra las desviaciones de la normalidad. Las hipótesis en esta prueba son:
+
+•	Ho:= todas las varianzas de las poblaciones son iguales.
+
+•	Ha:= al menos dos de las varianzas difieren.
+
+En la siguiente tabla se presenta el resultado de comparar las varianzas de todas las variables por cada año en el que se tienen observaciones del Censo económico a escala estatal.
+
+```{r}
+################################################################################################
+#análisis_exploratorio 126:164
+#Pruebas de igualdad de varianzas 
+
+#Generamos una tabla donde el nombre de las variables se vuelva una variable nueva
+a <- melt(estados_lw, id.vars=1:3)
+
+a$fvariable <- a$variable
+
+#Creamos una lista vacía para cada prueba
+plevene <- list()
+pfligner <- list()
+
+#Generamos el vector de años
+target <- unique(a$anio)
+
+
+#Creamos un ciclo para realizar las pruebas por año
+for (i in 1:length(target)){
+  #i=1
+  prueba <- subset(a, a$anio== target[[i]])
+  #prueba de levene
+  plevene[[i]] <- leveneTest(value ~ fvariable, data = prueba,kruskal.test = TRUE) 
+  # prueba de f-k
+  pfligner[[i]] <-  fligner.test(value ~ fvariable, data = prueba)
+}
+
+#Extraemos el resultado de la prueba
+DF_Levene <- c(plevene[[1]]$Df,plevene[[2]]$Df,plevene[[3]]$Df,plevene[[4]]$Df,plevene[[5]]$Df)
+F_value_Levene <- c(plevene[[1]]$`F value`, plevene[[2]]$`F value`,plevene[[3]]$`F value`,plevene[[4]]$`F value`,plevene[[5]]$`F value`)
+p_value_Levene <- c(plevene[[1]]$`Pr(>F)`,plevene[[2]]$`Pr(>F)`,plevene[[3]]$`Pr(>F)`,plevene[[4]]$`Pr(>F)`,plevene[[5]]$`Pr(>F)`)
+
+df_Fligner_Killen <- c(pfligner[[1]]$parameter, pfligner[[2]]$parameter, pfligner[[3]]$parameter, pfligner[[4]]$parameter, pfligner[[5]]$parameter)
+Xi_2_Fligner_Killen <- c(pfligner[[1]]$statistic,pfligner[[2]]$statistic,pfligner[[3]]$statistic,pfligner[[4]]$statistic,pfligner[[5]]$statistic)
+p_value_Fligner_Killen <- c(pfligner[[1]]$p.value,pfligner[[2]]$p.value,pfligner[[3]]$p.value,pfligner[[4]]$p.value,pfligner[[5]]$p.value)
+
+#Los unimos en un df
+prueba2 <- cbind.data.frame(target,df_Fligner_Killen, Xi_2_Fligner_Killen,p_value_Fligner_Killen)
+
+knitr::kable(prueba2, caption = "Tabla 8.Pruebas de igualdad de varianza")
+
+rm(list = c("a","pfligner","plevene","prueba","prueba2","df_Fligner_Killen","DF_Levene","F_value_Levene",
+            "p_value_Fligner_Killen","p_value_Levene","target","Xi_2_Fligner_Killen","i"))
+```
+
+
+Se observa que estadísticamente no se puede afirmar que las varianzas son diferentes para cada variable en todos los años. Sin embargo, aunque no se presentan los resultados, para algunos años, otras pruebas dan indicios de que no hay igualdad de varianza, pero esto se puede deber a que las pruebas no son robustas a las desviaciones de la normalidad de la muestra. Por ello, a continuación, se realizan algunas pruebas para detectar si las variables tienen una distribución normal.Primero se puede tratar de constatar a través de un histograma y una gráfica Q-Q si los datos tiene una distribución normal. Las gráficas para cada variable se muestran a continuación.
+
+```{r}
+#Análisis exploratorio 167:201
+#Normalidad visual
+#Creamos un nvo data frame con melt
+pba <- melt(estados_lw, id.vars=1:3)
+#Creamos un vector con los años
+target <- unique(pba$anio)
+varies <- unique(pba$variable)
+
+#gruardamos param originales de margenes
+margen <- par("mar")
+
+#Primero partimos la ventana de gráficas y modificamos márgenes
+par(mfrow=c(1,2))
+
+#Creamos un ciclo para gráficar
+for(i in 1:length(target)){
+  for (j in 1:length(varies)) {
+    par(mfrow=c(1,2))
+    aux <- subset(pba, pba$anio == target[[i]] & pba$variable== varies[[j]])
+    #Hacemos el histograma de la variable
+    hist(aux$value, freq = F, border = "gray50", main=paste("Histograma", as.vector(as.matrix(aux[1,4])), target[[i]], sep=" ")) 
+    lines(density(aux$value), lwd = 2) 
+    curve(dnorm(x, mean(aux$value), sd(aux$value)), lwd = 2, col = "blue", add = T) 
+    legend("topright", c("curva observada", "curva (normal) teórica"), lty = 1, lwd = 2, col = c("black", "blue"), bty = "n", cex = 0.6)
+    
+    #Encuentra los cuartiles asociados a la distribución normal del pib y los gráfica 
+    qqnorm(aux$value)
+    qqline(aux$value)
+      }
+  
+}
+
+#Restablecemos ventana
+par(mar=margen, mfrow=c(1,1))
+#Borramos objetos
+rm(list=c("aux", "pba","i","j", "margen","target","varies"))
+
+```
+
+En todos los años, las gráficas para todas las variables no presentan un distibución normal. Parece que se acercan pero no se puede saber en que mediada se acercan a este tipo de distribución. No se observa claramente una asimetría hacia alguna cola, por lo que se realizan pruebas estadísticas.En R se pueden realizar al menos 6 pruebas, en todas ellas se tiene el siguiente contrastes de hipótesis: 
+
+• H0: La muestra proviene de una distribución normal
+
+• Ha: La muestra no proviene de una distribución normal
+
+Es decir, si el valor de probabilidad (p-value) que obtenemos por la prueba es menor a 0.05 diremos que “nuestros datos no siguen una distribución normal”. 
+
+Las funciones para cada una de las pruebas están contenidas la librería nortest. Sin embargo, para decidir qué prueba se debe usar podemos hacer una reducción simple a lo siguiente:
+
+• Si el número de valores es menor a 30 -> shapiro.test
+
+• Si el número de valores es mayor a 30 -> lillie.test
+
+Cómo tenemos 32 observaciones se realiza la prueba lillie.test, que realiza la prueba de normalidad de Lilliefors (Kolmogorov-Smirnov) y cuyos resultados se presentan en la siguiente tabla.
+
+```{r}
+#analisis_exploratorio 209:241
+#Pruebas de normalidad
+
+#Creamos listas vacías para rellenar con las pruebas
+ppib <- list()
+ppot <- list()
+ppbt <- list()
+
+#Creamos vector de años
+target <- unique(estados_lw$anio)
+
+for(i in 1:length(target)){
+  aux <- subset(estados_lw, estados_lw$anio==target[[i]])
+  ppib[[i]]<- lillie.test(aux$pib)
+  ppot[[i]]<- lillie.test(aux$pot)
+  ppbt[[i]]<- lillie.test(aux$pbt)
+}
+
+#Construimos tabla de resultados
+
+anio <- target
+D_pib <- c(ppib[[1]]$statistic, ppib[[2]]$statistic, ppib[[3]]$statistic, ppib[[4]]$statistic, ppib[[5]]$statistic)
+pvalue_pib <- c(ppib[[1]]$p.value, ppib[[2]]$p.value, ppib[[3]]$p.value, ppib[[4]]$p.value, ppib[[5]]$p.value)
+
+D_pot <- c(ppot[[1]]$statistic, ppot[[2]]$statistic, ppot[[3]]$statistic, ppot[[4]]$statistic, ppot[[5]]$statistic)
+pvalue_pot <- c(ppot[[1]]$p.value, ppot[[2]]$p.value, ppot[[3]]$p.value, ppot[[4]]$p.value, ppot[[5]]$p.value)
+
+D_pbt <- c(ppbt[[1]]$statistic, ppbt[[2]]$statistic, ppbt[[3]]$statistic, ppbt[[4]]$statistic, ppbt[[5]]$statistic)
+pvalue_pbt <- c(ppbt[[1]]$p.value, ppbt[[2]]$p.value, ppbt[[3]]$p.value, ppbt[[4]]$p.value, ppbt[[5]]$p.value)
+
+
+aux <- cbind.data.frame(anio,D_pib, pvalue_pib, D_pot, pvalue_pot, D_pbt,pvalue_pbt)
+
+
+knitr::kable(aux, caption = "Tabla 9.Pruebas de normalidad")
+
+#Borramos
+rm(list=c("anio", "aux", "D_pbt", "D_pib", "D_pot", "i", "ppbt", "ppib", "ppot", "pvalue_pbt",
+          "pvalue_pib", "pvalue_pot", "target"  ))
+
+```
+
+Se debe notar que la prueba no arroja evidencia estadística de que las variables no tengan una distribución normal. Sin embargo, se debe tener en mente que las gráficas nmo muestran lo mismo.
+
+Por otro lado, para saber qué covariables están impulsando la variable respuesta, entonces se debe explorar la colinealidad. La colinealidad es la existencia de correlación entre covariables. Este problema seguramente se presentará pues de esperarse que si aumenta la pot aumenta la pbt y viceversa.  Para detectar colinealidad se puede realizar una gráfica de dispersión como la que se muestra a continuación.
+
+```{r}
+#analisis_exploratorio 245:247
+
+#Colinealidad
+
+ggpairs(estados_lw, columns = 4:6, ggplot2::aes(colour=as.factor(anio))) 
+
+```
+
+
+Se puede observar que la correlación entre covariables es muy alta para todos los años como era de esperarse y es positiva. El año con coeficientes más bajos es 1994 pero en ninguno de los casos es menor a 0.5.  Además, en la parte triangular superior se muestran los resultados de la prueba de correlación que se utiliza para evaluar la asociación entre dos o más variables. En particular, se utiliza el método de correlación de Pearson que arroja que todas las correlaciones son altamente significativas (*** implica un valor p menor a 0.00001).
+
+
+
+Finalmente, se averiagua si hay independencia entre las observaciones de la variable respuesta, para ello se utilizan las gráficas de la función de autocorrelación o ACF.
+
+```{r}
+#analisis_exploratorio 250:261
+#Autocorrelaciones
+
+#Años 
+target <- unique(estados_lw$anio)
+
+#Generamos gráficas
+
+for(i  in 1:length(target)) {
+  #plot.new()
+  aux <- subset(estados_lw, estados_lw$anio == target[[i]])
+  acf(aux$pib, main=paste("pib", target[[i]], sep=" "))
+  
+}
+
+rm(list = ls())
+```
+
+Dado que las lineas verticales no sobrepasan en ningún punto (sólo en el 0) el intervalo o banda de confianza (línea azul) se puede decir que es probable que no haya relación entre el pib de los estados en cada uno de los años de observación. 
+
+## Las regresiones lineales por el método de mínimos cuadrados
+
+Ahora que se ha corroborado que las variables pib, pbt y pot a escala estatal cumplen con varios de los supuestos para realizar una regresión, ahora se pueden realizar dichas regresiones, que estan dadas para cada año por:
+
+$$ \hat{pib}_{est_{1994}} = \hat{a}_{1994} + \hat{\alpha}_{1_{1994}}pbt_{est_{1994}}+\hat{\alpha}_{2_{1994}}pot_{est_{1994}}+\epsilon_{1994}, $$
+
+$$ \hat{pib}_{est_{1999}} = \hat{a}_{1999} + \hat{\alpha}_{1_{1999}}pbt_{est_{1999}}+\hat{\alpha}_{2_{1999}}pot_{est_{1999}}+\epsilon_{1999}, $$
+
+$$ \hat{pib}_{est_{2004}} = \hat{a}_{2004} + \hat{\alpha}_{1_{2004}}pbt_{est_{2004}}+\hat{\alpha}_{2_{2004}}pot_{est_{2004}}+\epsilon_{2004}, $$
+
+$$ \hat{pib}_{est_{2009}} = \hat{a}_{2009} + \hat{\alpha}_{1_{2009}}pbt_{est_{2009}}+\hat{\alpha}_{2_{2009}}pot_{est_{2009}}+\epsilon_{2009}, $$
+
+$$ \hat{pib}_{est_{2014}} = \hat{a}_{2014} + \hat{\alpha}_{1_{2014}}pbt_{est_{2014}}+\hat{\alpha}_{2_{2014}}pot_{est_{2014}}+\epsilon_{2014}. $$
+
+La estimación se realiza utilizando el método de mínimos cuadrados a través de la función lm de R aplicada a los datos estatales de cada año. Los resultados de dichas regresiones se presentan en la siguiente tabla.
+
+```{r}
+#reg_lin (7:67)
+#Regresión lineal
+
+#FIJAMOS
+base_m <- "C:/Users/avalo/OneDrive/Documentos/PIB_MUNI/codigos_finales/modified_sources"
+setwd(base_m)
+#Llamamos base estatal logaritmo(w)
+############################################################################################
+#Llamamos a la base de datos estatal estadarizada a w y a ln
+base_elw <- read.csv("estados_trans_ln.csv", header = T, stringsAsFactors = FALSE)
+#Llamamos a la base de datos municipal a w y a ln
+base_mlw <- read.csv("municipios_trans_ln.csv", header = T, stringsAsFactors = FALSE)
+#Base estatal sin transfomrar
+ESTADOS <- read.csv("estatal_millones_2013.csv", header = T, stringsAsFactors = FALSE)
+
+############################################################################################
+#Limpieza de df
+
+#QUITAMOS COLUMNAS
+base_elw <- base_elw[,c("anio", "id_edo", "Entidad.x", "pib", "pot", "pbt" )]
+base_mlw <- base_mlw[,c("anio", "id_edo", "id_mun", "Entidad", "Municipio", "pot", "pbt")]
+ESTADOS <- ESTADOS[,c("anio", "id_edo", "Entidad.x", "PIB")]
+
+#Quitamos el 2019
+base_elw <- subset(base_elw, base_elw$anio != 2019)
+base_mlw <- subset(base_mlw, base_mlw$anio != 2019)
+ESTADOS <- subset(ESTADOS, ESTADOS$anio != 2019)
+
+#Renombramoms
+names(ESTADOS)[4] ="PIB_ENT"
+
+#extraemos los años
+target <- unique(base_elw$anio)
+
+#creamos lista vacía
+modelo <- list()
+smodelo <- list()
+
+#Creamos ciclo
+for(i in 1:length(target)){
+  #i=3
+  aux <- subset(base_elw, base_elw$anio==target[[i]])
+  #Realizamos la regresión
+  modelo[[i]] <- lm(pib~pbt+pot, data=aux)
+  smodelo[[i]] <- summary(modelo[[i]])
+}
+
+#Extraemos los coeficientes
+a <- c(smodelo[[1]]$coefficients[1,1], smodelo[[2]]$coefficients[1,1], smodelo[[3]]$coefficients[1,1],
+       smodelo[[4]]$coefficients[1,1], smodelo[[5]]$coefficients[1,1])
+
+alpha_1 <- c(smodelo[[1]]$coefficients[2,1], smodelo[[2]]$coefficients[2,1], smodelo[[3]]$coefficients[2,1],
+             smodelo[[4]]$coefficients[2,1], smodelo[[5]]$coefficients[2,1])
+
+alpha_2 <- c(smodelo[[1]]$coefficients[3,1], smodelo[[2]]$coefficients[3,1], smodelo[[3]]$coefficients[3,1],
+             smodelo[[4]]$coefficients[3,1], smodelo[[5]]$coefficients[3,1])
+
+#Extraemos estadísticos
+R_2_multiple <- c(smodelo[[1]]$r.squared, smodelo[[2]]$r.squared, smodelo[[3]]$r.squared, 
+                  smodelo[[4]]$r.squared, smodelo[[5]]$r.squared)
+p_value_modelo <- c(5.962e-07, 2.217e-14, 2.2e-16, 2.2e-16, 2.2e-16 )
+
+#Unimos en un gran cuadro
+anio <- target
+aux <- cbind.data.frame(anio, a,alpha_1, alpha_2, R_2_multiple, p_value_modelo)
+
+
+
+knitr::kable(aux, caption = "Tabla 10.Resultados del ajuste por el método de mínimos cuadrados.")
+```
+
+Se debe notar que parece que los modelos se han comportado bien, onteniendo un valor p que nos indica que el modelo es estad´siticamente significativo y un valor de $R^_{2}$ acceptable para todos los años, excepto tal vez para el año 1994, en el que el modelo de regresión explia solo el 62.8% de los datos. Otra forma de averiguar que tan bueno es el modelo es a través de las gráficas de diagnóstico, iniciando por la gráfica de residuales vs valores ajustados y que se muestran en la siguiente figura.
+
+```{r}
+##########################################################################################
+#reg_lin 71:74
+#Gráfica diagnóstico std_error
+for(i in 1:length(target)){
+  plot(modelo[[i]], which = 1,  main = paste("Estimación pib estatal", target[[i]], sep=" "))
+}
+```
+
+Las cinco gráficas anteriores son de utilidad para determinar si se cumple la suposición de linealidad de los residuos. La línea punteada en y=0 representa la línea de ajuste. Los puntos por arriba de la línea tienen un residual positivo, mientras que los puntos por debajo de ella tienen un residual negativo. Además, la línea roja  es la curva polinomial de orden superior suavizada para darnos una idea del patrón de movimiento residual. Es decir, si se observa cierto patrón se podría determinar que el modelo requiere de un ajuste polinomial.  Para los modelos de cada año se observa que los residuos se distribuyen equitativamente por arriba y por debajo de la línea punteada, además las líneas rojas al pasar de los años parece que adquieren cierta curvatura sin embargo no sugiere determinante que se deba realizar un ajuste a los modelos. Por otro lado, en todas ellas hay puntos enumerados, lo que quiere decir que en cada año existen puntos influyentes que ocasionan que la regresión (o modelo) sobre estime o sub estime el pib estatal.
+
+Otra gráfica de diagnóstico es la gráfica  Q-Q normal que se utiliza para comprobar si los residuos  (errores) siguen una distribución normal o no. Los residuos se distribuyen normalmente si los puntos siguen de cerca la línea de puntos. En el caso de los modelos generados las gráficas son las siguientes.
+
+```{r}
+#reg_lin 77:83
+#Gráfica QQ normalidad residuos
+
+plot.new()
+for(i in 1:length(target)){
+  plot(modelo[[i]], which = 2,  main = paste("Estimación pib estatal", target[[i]], sep=" "))
+}
+
+```
+
+En casi todos los años se observa que la mayoria de los datos están cerca de la línea punteada, exceptuando a los puntos etiquetados como influyentes. Por lo que se puede suponer que los residuos se distribuyen normalmente.
+
+Otra gráfica de utilidad es la de "*scale-location*" que también es conocida como gráfica "*spread-location*". Esta gráfica muestra si los residuos se distribuyen por igual a lo largo de los rangos de predictores. Así es como puede comprobar el supuesto de varianza igual (homocedasticidad). Lo ideal es que se vea línea horizontal con puntos de dispersión iguales (aleatorios). Dichas gráficas para cada uno de los modelos lineales se presenta a continuación.
+
+```{r}
+#reg_lin 86:91
+#scale-location 
+
+plot.new()
+for(i in 1:length(target)){
+  plot(modelo[[i]], which = 3,  main = paste("Estimación pib estatal", target[[i]], sep=" "))
+}
+
+```
+
+Se debe notar que en todos los años se obtiene una línea horizontal roja con un ligero ángulo de inclinación por lo que es posible suponer que los residuos cumplen con la suposición de igualdad de varianza. Desde luego, los modelos podrían mejorarse, pero por ahora se quedaran así pues se busca ajustar a una función de producción logarítmica.
+
+Por otro lado, aunque parece que los modelos son estadísticamente correctos es importante conocer qué tanto se alejan las estimaciones (o modelos) de la realidad, para ello se hara una gráfica de dispersión en la que se comparen los valores ajustados con los reales del pib a escala estatal. Se espera que los puntos queden sobre una línea diagonal a 45 grados. 
+
+```{r}
+#reg_lin 94:114
+#Gráfica de dispersión pib estatal real vs estimado
+#Veamos con una gráfica de dispersión si se alejan muhco los estimados de los reales a escala estatal
+prueba <- NULL
+
+for (i in 1:length(target)) {
+  #i=1 
+  aux2 <- subset(base_elw, base_elw$anio == target[[i]])
+  aux2$pib_est <- modelo[[i]]$fitted.values
+  aux2$error <- aux2$pib- aux2$pib_est
+  aux2$error_abs <- abs(aux2$pib- aux2$pib_est)
+  aux2$error_cuad <- (aux2$pib- aux2$pib_est)**2
+  aux2$error_porc <- abs((aux2$pib- aux2$pib_est)/aux2$pib)
+  aux2 <- aux2[,c("anio","id_edo", "pib", "pib_est","error", "error_abs","error_cuad", "error_porc")]
+  prueba <- rbind.data.frame(prueba, aux2)
+  
+}
+
+#Graficamos
+ggplot(prueba, aes(x=pib, y=pib_est))+
+  geom_point()+ geom_abline()+
+  ggtitle(paste("Comparación pib real y estimado"))+
+  facet_wrap(~anio)
+
+```
+
+
+Es interesante notar que conforme avanzan los años los puntos parecen agruparse alrededor de la línea recta lo que indica un mejor modelo de regresión. Por otro lado, para cuantificar la medida de error se usaran las siguientes métricas para cada año de estimación:
+
+* Error absoluto medio (Mean absolute deviation (MAD))
+
+$$ MAD = \frac{1}{n}\sum_{i=1}^{n}|pib_{i}-\hat{pib}_{i}|,$$
+con $n$ el número de observaciones (entidades).
+
+* Error cuadrático medio (Mean squared error (MSE))
+
+$$ MSE = \frac{1}{n}\sum_{i=1}^{n}(pib_{i}-\hat{pib}_{i})^{2}.$$
+
+* Error  absoluto porcentual promedio (Mean absolute percent error (MAPE))
+
+$$ MAPE = \frac{1}{n}\sum_{i=1}^{n}|\frac{pib_{i}-\hat{pib}_{i}}{pib_{i}}|*100 $$
+
+* La suma corrida del error (Running sum error RSE)
+
+$$ RSE = \sum_{i=1}^{n}(pib_{i}-\hat{pib}_{i})$$
+
+* Señal de rastreo (tracking sum TS)
+
+$$ TS = \frac{RSE}{MAD} $$
+
+A continuación, se presenta una tabla con dichas métricas por año.
+
+```{r}
+#reg_lin 121:128
+#Calculamos los errores por año
+
+errores <- prueba %>% group_by(anio) %>% summarise(MAD = mean(error_abs),
+                                                   MSE = mean(error_cuad), 
+                                                   RSE = sum (error), TS = sum(error)/mean(error_abs))
+
+knitr::kable(errores, caption = "Tabla 11.Medida del error para el modelo de regresión lineal de cada año.")
+```
+
+
+### Primera estimación del PIB municipal
+
+Para encontrar la estimación del pib municipal se supone que las estimaciones encontradas a escala estatal son válidas a escla municipal. Es decir, para cada año se supone que el $pib_{mun}=ln(\frac{PIB_{mun}}{max(PIB_{mun})})$ está dado por:
+
+$$ \hat{pib}_{mun_{1994}} = \hat{a}_{1994} + \hat{\alpha}_{1_{1994}}pbt_{mun_{1994}}+\hat{\alpha}_{2_{1994}}pot_{mun_{1994}}+\epsilon_{1994}, $$
+
+$$ \hat{pib}_{mun_{1999}} = \hat{a}_{1999} + \hat{\alpha}_{1_{1999}}pbt_{mun_{1999}}+\hat{\alpha}_{2_{1999}}pot_{mun_{1999}}+\epsilon_{1999}, $$
+
+$$ \hat{pib}_{mun_{2004}} = \hat{a}_{2004} + \hat{\alpha}_{1_{2004}}pbt_{mun_{2004}}+\hat{\alpha}_{2_{2004}}pot_{mun_{2004}}+\epsilon_{2004}, $$
+
+$$ \hat{pib}_{mun_{2009}} = \hat{a}_{2009} + \hat{\alpha}_{1_{2009}}pbt_{mun_{2009}}+\hat{\alpha}_{2_{2009}}pot_{mun_{2009}}+\epsilon_{2009}, $$
+
+$$ \hat{pib}_{mun_{2014}} = \hat{a}_{2014} + \hat{\alpha}_{1_{2014}}pbt_{mun_{2014}}+\hat{\alpha}_{2_{2014}}pot_{mun_{2014}}+\epsilon_{2014}, $$
+
+donde $pbt_mun = ln(\frac{PBT_{mun}}{max(PBT_{mun})})$, $pot_mun = ln(\frac{POT_{mun}}{max(POT_{mun})})$, las $\hat{a_{i}}_{t}$ y las $\hat{\alpha_{i}}_{t}$ provienen de las estimaciones estatales plasmadas en la Tabla 10. Los resultados del $\hat{pib}_{mun_{t}}$ se presentan como resumen estadístico en la Tabla 12.
+
+```{r}
+#reg_lin 132:154
+#Estimación pib municipal
+#Borramos cosas
+rm(list = c("a", "alpha_1", "alpha_2", "anio", "aux2", "errores", "i", "smodelo",
+            "modelo", "p_value_modelo", "prueba", "R_2_multiple", "target"))
+
+#Tabla de coeficientes por año
+aux <- aux[,c("anio", "a", "alpha_1", "alpha_2")]
+
+#Se deb quitar municipios con NA'S
+base_mlw <- subset(base_mlw, is.na(base_mlw$pbt) == F)
+base_mlw <- subset(base_mlw,is.infinite(base_mlw$pbt) == F)
+
+#Unimos con los coefs
+base_mlw <- merge(base_mlw, aux, by="anio", all=TRUE)
+
+#Calculamos el PIB
+base_mlw$pib <- base_mlw$a + (base_mlw$alpha_1*base_mlw$pbt)+ (base_mlw$alpha_2*base_mlw$pot)
+
+#Encontremos la estadística de resumen
+
+resumen <- base_mlw %>% group_by(anio) %>% summarise(mini=min(pib, na.rm = TRUE), Q1 =quantile(pib, na.rm = TRUE)[[2]], 
+                                                     mediana = median(pib,na.rm = TRUE), media=mean(pib, na.rm = TRUE),
+                                                     Q3= quantile(pib, na.rm=TRUE)[[4]],
+                                                     maxi = max(pib,na.rm=TRUE))
+
+knitr::kable(resumen, caption = "Tabla 12. Resumen estadístico de los resultados de la estimación del pib municipal.")
+```
+
+Es importante notar que con ésta metodología se pierde información de 94 municipios. La mayoría de ellos (93) corresponden al año de 1994 y se debe a que la PBT tiene un valor de cero. Otro municipio del que se pierde información es Chicoloapan en el Estado de México para el año 2004 en el que tiene un valor negativo para la PBT. La lista de dichos municipios se presenta en el ANEXO 1.
+
+Ahora, el siguiente paso consiste en aplicar la expoenencial a la estimación realizada, de esta forma se encontrarán los valores del PIB dados por:
+
+$$w_{pib_{mun,t}} = \frac{PIB_{mun,t}}{max(PIB_{mun,t})}=exp(pib_{mun,t}),$$
+
+De la expresión anterior se debe encontrar el valor máximo del PIB municipal para cada año, para ello se observa que para cada estado en cada año:
+
+$$\sum_{i}^{n}w_{pib_{mun,t}} = \sum_{i}^{n}\frac{PIB_{mun,t}}{max(PIB_{mun,t})}
+                                = \frac{1}{max(PIB_{mun,t})}\sum_{i}^{n}PIB_{mun_i,t}
+                                =\frac{1}{max(PIB_{mun_i,t})}PIB_{estatal,i,t}.$$
+                                
+Pues la suma de los PIB's a escala municipal del estado i-ésimo debe ser exactamente igual PIB a escala estatal. Así que el valor máximo del PIB municipal será:
+
+$$max(PIB_{mun_i,t}) = \frac{PIB_{estatal,i,t}}{\sum_{i}^{n}w_{pib_{mun,t}}},$$
+
+esta expresión es de utilidad pero tendrá un problema para 1994, año para el que no ha sido posible estimar el PIB de 93 municipios. En la Tabla 13 se muestra la estadística de resumen de las $w_{pib_{mun,t}}$.
+
+```{r}
+#############################################################################################
+#reg_lin 157:168
+##Estimación de w
+rm(list=c("aux", "resumen"))
+
+#lOS WIS SON LA EXPONENCIAL DEL pib estimado
+base_mlw$wis <- exp(base_mlw$pib)
+
+#Estimación del máximo
+#1. Se suman los wi's por estado
+resumen  <- base_mlw %>% group_by(anio) %>% summarise(mini=min(wis, na.rm = TRUE), Q1 =quantile(wis, na.rm = TRUE)[[2]], 
+                                                             mediana = median(wis,na.rm = TRUE), media=mean(wis, na.rm = TRUE),
+                                                             Q3= quantile(wis, na.rm=TRUE)[[4]],
+                                                             maxi = max(wis,na.rm=TRUE))
+knitr::kable(resumen, caption = "Tabla 13. Resumen estadístico de los resultados de la estimación de las w'is.")
+
+
+```
+
+Por otro lado, el máximo del PIB municipal para cada estado se presenta en la tabla 14.
+
+```{r}
+############################################################################################
+#REG_LIN 171:180
+#Estimación del máximo
+#1. Se suman los wis por anio y id_edo
+#1. Se suman los wi's por estado
+resumen  <- base_mlw %>% group_by(anio, id_edo) %>% summarise(suma_wis=sum(wis, na.rm = TRUE))
+
+#2. Cruzamos con la base de datos del PIB REAL
+pib_real <- merge(ESTADOS, resumen, by=c("anio","id_edo"))
+
+#3. Sacamos el pib municipal máximo por entidad y por año
+pib_real$PIB_mun_max <- pib_real$PIB_ENT/pib_real$suma_wis
+
+#4. Cruzamos con la estimación base_mlw
+pib_mun_est <- merge(base_mlw, pib_real, by=c("anio", "id_edo"), all = T)
+
+#Reordenamos
+#Vector de tiempo
+target <- unique(pib_real$anio)
+
+PBA <- list()
+
+for (i in 1:length(target)) {
+  aux <- subset(pib_real, pib_real$anio == target[[i]])
+  names(aux)[4] <- paste("PIB_ENT", target[[i]], sep="_")
+  names(aux)[5] <- paste("suma_wis", target[[i]], sep="_")
+  names(aux)[6] <- paste("PIB_mun_max", target[[i]], sep="_")
+  PBA[[i]] <- aux
+}
+
+aux2 <- merge(PBA[[1]], PBA[[2]], by=c("id_edo"), all = T)
+aux2 <- aux2[, c("id_edo", "Entidad.x.x", "PIB_ENT_1994", "suma_wis_1994", "PIB_mun_max_1994",
+               "PIB_ENT_1999", "suma_wis_1999", "PIB_mun_max_1999")]
+
+aux2 <- merge(aux2, PBA[[3]], by=c("id_edo"), all = T)
+aux2 <- aux2[, c("id_edo", "Entidad.x.x", "PIB_ENT_1994", "suma_wis_1994", "PIB_mun_max_1994",
+                 "PIB_ENT_1999", "suma_wis_1999", "PIB_mun_max_1999", "PIB_ENT_2004",
+                 "suma_wis_2004", "PIB_mun_max_2004")]
+
+aux2 <- merge(aux2, PBA[[4]], by=c("id_edo"), all = T)
+aux2 <- aux2[, c("id_edo", "Entidad.x.x", "PIB_ENT_1994", "suma_wis_1994", "PIB_mun_max_1994",
+                 "PIB_ENT_1999", "suma_wis_1999", "PIB_mun_max_1999", "PIB_ENT_2004",
+                 "suma_wis_2004", "PIB_mun_max_2004",  "PIB_ENT_2009", "suma_wis_2009", 
+                 "PIB_mun_max_2009")]
+
+aux2 <- merge(aux2, PBA[[5]], by=c("id_edo"), all = T)
+aux2 <- aux2[, c("id_edo", "Entidad.x.x", "PIB_ENT_1994", "suma_wis_1994", "PIB_mun_max_1994","PIB_ENT_1999", "suma_wis_1999", "PIB_mun_max_1999", "PIB_ENT_2004",
+                 "suma_wis_2004", "PIB_mun_max_2004",  "PIB_ENT_2009", "suma_wis_2009", 
+                 "PIB_mun_max_2009", "PIB_ENT_2014", "suma_wis_2014", "PIB_mun_max_2014")]
+
+knitr::kable(aux2, caption = "Tabla 14. PIB máximo municipal para cada estado y año.")
+
+```
+
+Es importante notar que muchas veces se cumple que el PIB máximo municipal es mayor al PIB estatal. Esto es algo que requiere mayor estudio.
+
+Una vez estimado el valor del máximo del $PIB_{mun}$ se utiliza junto con los valores de los $w_{mun_{i}}$ para estimar el PIB a escala municipal, que estará dado por:
+
+$$PIB_{mun_{i,t}} = w_{mun_{i,t}}*max(PIB_{mun_{i,t}})$$
+
+En la siguiente tabla se presenta la estadísitica de resumen de las estimaciones del PIB municipal por año de estimación.
+
+```{r}
+#reg_lin 221: 237
+#Calculamos los PIB'S municipales
+#Estimación municipal
+rm(list = c("aux", "aux2", "PBA", "pib_real","resumen","i", "target"))
+
+#1. Multiplicamos wi por el maximo
+pib_mun_est$PIB_MUN <- pib_mun_est$wis*pib_mun_est$PIB_mun_max
+
+#2. Limpiamos el df
+pib_mun_est <- pib_mun_est[,c("anio", "id_edo", "id_mun", "Entidad", "Municipio", "PIB_ENT" , "PIB_MUN" )]
+
+
+#Pensar como presentar
+
+resumen <-pib_mun_est %>% group_by(anio) %>% summarise(min=min(PIB_MUN, na.rm = TRUE), Q1 =quantile(PIB_MUN, na.rm = TRUE)[[2]], 
+                                                             mediana = median(PIB_MUN,na.rm = TRUE), media=mean(PIB_MUN, na.rm = TRUE),
+                                                             Q3= quantile(PIB_MUN, na.rm=TRUE)[[4]],
+                                                             max = max(PIB_MUN,na.rm=TRUE))
+
+
+knitr::kable(resumen, caption = "Tabla 15. Resumen estadístico de los resultados de la estimación del PIB municipal.")
+```
+
+Por otro lado, es importante conocer la suma de los PIB's municipales estatales para comparar con los datos reales y estimar, de alguna manera la eficiencia de la regresión. Para ellos se definirá el error para cada año como:
+
+$$ error_{municipal_{j}} = PIB_{real estatal_{j}} -\sum_{i=1}^{n}PIB_{municipios_{j_{i}}} ,$$
+
+donde $PIB_{real estatal_{j}}$ se refiere al PIB real del estado j-esimo y $\sum_{i=1}^{n}PIB_{municipios_{j_{i}}}$ se refiere a la suma del PIB estaimado para los i municipios del estado j. Los resultados se presentan a continuación.
+
+Además, el error para cada año de toda la estimación estará dado por los indicadores definidos anteriormente cmo $MAD$, $MSE$, $RSE$ y $TS$ sólo que ahora se usaran las definiciones de $error_{municipal_{j}}$ y llevarán la etiqueta mun ($MAD_{mun}$, $MSE_{mun}$, $RSE_{mun}$ y $TS_{mun}$) para distinguir del error total del modelo. Este será el indicador que nos interesa para decidir cuál es la mejor estimación. Los resultados del error se alistan a continuación.
+
+```{r}
+#Estimación del error
+rm(list = c("base_elw", "base_mlw", "resumen"))
+
+#1. Sumamos por entidad y ano los pib's municipales
+suma_pib_mun <- pib_mun_est %>% group_by(anio, id_edo) %>% summarise(PIB_ENT_est = sum(PIB_MUN, na.rm = T))
+
+#2. Cruzamos con la base real
+
+aux <- merge(ESTADOS, suma_pib_mun, by=c("anio", "id_edo"), all = T)
+
+#Sacamos el error
+aux$error <- aux$PIB_ENT- aux$PIB_ENT_est
+aux$error_abs <- abs(aux$PIB_ENT- aux$PIB_ENT_est)
+aux$error_cuad <- (aux$PIB_ENT- aux$PIB_ENT_est)**2
+aux$error_porc <- abs((aux$PIB_ENT- aux$PIB_ENT_est)/aux$PIB_ENT)
+
+
+#Calculamos los errores por año
+
+errores <- aux %>% group_by(anio) %>% summarise(MAD = mean(error_abs),
+                                                   MSE = mean(error_cuad), 
+                                                   RSE = sum (error), TS = sum(error)/mean(error_abs))
+
+
+knitr::kable(errores, caption = "Tabla 16. Métrica del error  dela estimación municipal.")
+
+rm(list = c("aux", "errores", "ESTADOS", "pib_mun_est", "suma_pib-mun"))
+
+```
+
+Finalmente, aunque por ahora no se ajustara la estimación municipal para que la suma de los PIB's municipales coincida con la suma del PIB de cada uno de los estados. En el Anexo 2 se presentan los resultados de la estimación sin ajustar.
+
+## Regresión utilizando el método SUR
+
+En el método de  Regresiones aparentemente no relacionadas (SUR por sus siglas en inglés)se trata de ajustar a un sistema de ecuaciones en lugar de una sola ecuación. Las regresiones aparentemente no relacionadas (SUR) contienen solo regresores exógenos. Las ecuaciones se denominan aparentemente no relacionadas porque solo están relacionadas a través de los términos de error.
+
+Entonces, para poder ocupar esta téncina es importante conocer la correlación entre los errores de los modelos líneales de la sección anterior. Para ello, se presenta el siguiente correlograma.
+
+```{r}
+#sur_regresion 1:60
+#Método Sur
+
+#Fijamos directorio
+base_m <- "C:/Users/avalo/OneDrive/Documentos/PIB_MUNI/codigos_finales/modified_sources"
+setwd(base_m)
+
+############################################################################################
+#Llamamos a la base de datos estandarizada
+base_elw <- read.csv("estados_trans_ln.csv", header = T, stringsAsFactors = FALSE)
+
+#municpal
+base_mlw <- read.csv("municipios_trans_ln.csv", header = T, stringsAsFactors = FALSE)
+
+#PIB ESTATAL REAL
+estados <- read.csv("estatal_millones_2013.csv", header = T, stringsAsFactors = FALSE)
+
+
+
+############################################################################################
+#Limpiamos bases
+#Quitamos el 2019
+base_elw <- subset(base_elw, base_elw$anio != 2019)
+base_mlw <- subset(base_mlw, base_mlw$anio != 2019)
+estados <- subset(estados, estados$anio != 2019)
+
+#Quitamos columnas que no son de utilidad
+base_elw <- base_elw[,c("anio", "id_edo", "Entidad.x", "pib", "pot", "pbt")]
+base_mlw <- base_mlw[,c("anio", "id_edo", "id_mun", "Entidad", "Municipio", "pot", "pbt")]
+estados <- estados[,c("anio", "id_edo", "Entidad.x", "PIB")]
+names(estados)[4] <-"PIB_estatal"
+
+#############################################################################################
+#Generamos regresión lineal
+reg_lin <- list()
+sreg_lin <- list()
+target <- unique(base_elw$anio)
+
+for(i in 1:length(target)){
+  aux <- subset(base_elw, base_elw$anio == target[[i]])
+  reg_lin[[i]] <- lm(pib~pbt+pot, data=aux)
+  sreg_lin[[i]] <- summary(reg_lin[[i]])
+  
+}
+
+r_1994 <- sreg_lin[[1]]$residuals
+r_1999 <- sreg_lin[[2]]$residuals
+r_2004 <- sreg_lin[[3]]$residuals
+r_2009 <- sreg_lin[[4]]$residuals
+r_2014 <- sreg_lin[[5]]$residuals
+
+residuales <- cbind.data.frame(r_1994,r_1999,r_2004,r_2009,r_2014)
+
+#Gráficamos
+matriz_cor <- cor(residuales)
+
+
+corrplot(matriz_cor, type="lower", method = "square", tl.cex = 1.5, cl.cex = 1.5, addCoef.col = "white", number.digits = 2, number.cex = 0.75)
+
+```
+
+
+Se puede notar que los erroes de todos los años (excepto 1994) tienen una correlación alta positiva, por lo que es recomendable utilizar el método SUR. Para ello se tendrá el sistema de ecuaciones, sobre las variables estandarizadas y transformadas:    
+
+$$ pib_{i} = a_{i} + \alpha_{1,i}pbt +\alpha_{2,i}pot = \pmb{a}+\pmb{X\alpha},$$
+donde las variables en negritas representan vectores y matrices y la i representa cada uno de los añosn para los que se dispone de información. Para aplicar esté métode se utiliza la librería *systemfit* junto con la función *systemfit* que se alimenta con el sistema de ecuaciones almacenado en una lista y con el método de interés, es decir, SUR. Se extrae la información de la regresión SUR con la función summary.  El resultado de la regresión se muestra en la siguiente tabla
+
+```{r}
+#sur_regression 61:127
+#Método SUr
+#Borramos objetos
+rm(list=c("aux", "matriz_cor", "reg_lin", "sreg_lin", "i", "r_1994", "r_1999", "r_2004", "r_2009", "r_2014"))
+
+#Creamos el vector de variables dependientes en independientes por año
+
+#Creamos una función que genera una lista con 3 elementos cada una un vector con las vars dep e indep
+sistema <- function(df, year){
+  pba <- df %>% filter(anio == year)
+  y_pib <- as.vector(as.matrix(pba$pib))
+  x_pot <- as.vector(as.matrix(pba$pot))
+  x_pbt <- as.vector(as.matrix(pba$pbt))
+  lista <- list(y_pib,x_pbt, x_pot)
+  return(lista)
+  
+}
+
+#Creamos los vectores embebidos en la lista
+
+list_1994 <- sistema(base_elw,1994)
+list_1999 <- sistema(base_elw,1999)
+list_2004 <- sistema(base_elw,2004)
+list_2009 <- sistema(base_elw,2009)
+list_2014 <- sistema(base_elw,2014)
+
+#Generamos ecuaciones
+eq1994 <- list_1994[[1]]~ list_1994[[2]]+list_1994[[3]]
+eq1999 <- list_1999[[1]]~ list_1999[[2]]+list_1999[[3]]
+eq2004 <- list_2004[[1]]~ list_2004[[2]]+list_2004[[3]]
+eq2009 <- list_2009[[1]]~ list_2009[[2]]+list_2009[[3]]
+eq2014 <- list_2014[[1]]~ list_2014[[2]]+list_2014[[3]]
+
+#Generamos el sistema de ecuaciones
+sis_ec <- list (eq1994 = eq1994, eq1999 = eq1999, eq2004 =eq2004, eq2009 = eq2009, eq2014=eq2014)
+
+#Aplicamos el método SUR
+sur <- systemfit(sis_ec, method = "SUR", data = base_elw)
+rsur <-summary(sur)
+
+
+#Generamos tabla de resultados
+
+#Vector con años
+anio <- unique(base_elw$anio)
+
+
+#vector de intercepto
+a <- c(rsur$coefficients[1,1], rsur$coefficients[4,1], rsur$coefficients[7,1], rsur$coefficients[10,1],rsur$coefficients[13,1])
+pv_a <- c(rsur$coefficients[1,4], rsur$coefficients[4,4], rsur$coefficients[7,4], rsur$coefficients[10,4],rsur$coefficients[13,4])
+#vector alpha1
+alpha_1 <- c(rsur$coefficients[2,1], rsur$coefficients[5,1], rsur$coefficients[8,1], rsur$coefficients[11,1],rsur$coefficients[14,1])
+pv_alpha_1 <- c(rsur$coefficients[2,4], rsur$coefficients[5,4], rsur$coefficients[8,4], rsur$coefficients[11,4],rsur$coefficients[14,4])
+#vector alpha2
+alpha_2 <- c(rsur$coefficients[3,1], rsur$coefficients[6,1], rsur$coefficients[9,1], rsur$coefficients[12,1],rsur$coefficients[15,1])
+pv_alpha_2 <- c(rsur$coefficients[3,4], rsur$coefficients[6,4], rsur$coefficients[9,4], rsur$coefficients[12,4],rsur$coefficients[15,4])
+
+#vector_R2 AJUSTADA
+R_2_ajustada <- c(0.588197,0.821114  ,0.880025 ,0.911492,0.898662)
+
+#Unimos en un df
+resultado <- cbind.data.frame(anio, a, pv_a, alpha_1, pv_alpha_1, alpha_2, pv_alpha_2, R_2_ajustada)
+
+knitr::kable(resultado, caption = "Tabla 17. Coeficientes de regresión resultantes del método SUR.")
+
+```
+
+Se debe notar que el valor de la $R^{2}$ disminuyó. Adempas los intercetos no son estadísticamente significativos para el modelo. Desde luego, estas observaciones quedan sin importancia si no se compara la estimación estatal del $pib=ln(w_{i})=ln(\frac{PIB_{estatal,i}}{max(PIB_{estatal,i})})$ para cada año. Lo anterior se presenta en la siguiente gráfica de dispersión
+
+```{r}
+#sur_regression 130:!51
+#Calculo gráfica de dispersión
+
+rm(list=c("a", "alpha_1", "alpha_2", "eq1994", "eq1999", "eq2004", "eq2009", "eq2014", "list_1994",
+          "list_1999", "list_2004", "list_2009", "list_2014", "pv_a", "pv_alpha_1",
+          "pv_alpha_2", "R_2_ajustada", "sis_ec", "target", "residuales","sistema"))
+
+#Quitamos columnas de resultado
+resultado <- resultado[,c("anio", "a", "alpha_1", "alpha_2")]
+
+#Unimos con base_elw
+aux <- merge(base_elw, resultado, by="anio", all=T)
+
+#Calculamos el pib_estatal
+aux$pib_estimado = aux$a + (aux$alpha_1*aux$pbt) + (aux$alpha_2 * aux$pot)
+
+#Graficamos
+library(ggplot2)
+
+ggplot(aux, aes(x=pib, y= pib_estimado))+
+  geom_point()+ geom_abline()+
+  ggtitle(paste("Comparación pib real y estimado estatal"))+
+  facet_wrap(~anio)
+```
+
+Se puede observar que la mayoria de los puntos caen sobre la línea recta a 45 grados o se acercan mucho. Sin embargo, dos puntos en cada año se alejan mucho de dicha línea, lo que quiere decir que se subsertima el $pib$ pues van por debajo de la misma. Al igual que en el caso de la regresión lineal, para el método sur también se calculan las métricas del error etiquetadas como $MAD$, $MSE$, $RSE$ y $TS$, definidas anteriormente. En la siguiente tabla se muestran dichos errores.
+
+```{r}
+#sur_regresion 158:170
+#Cálculo del error
+
+aux$error <- aux$pib- aux$pib_estimado
+aux$error_abs <- abs(aux$pib- aux$pib_estimado)
+aux$error_cuad <- (aux$pib- aux$pib_estimado)**2
+aux$error_porc <- abs((aux$pib- aux$pib_estimado)/aux$pib)
+aux <- aux[,c("anio","id_edo", "pib", "pib_estimado","error", "error_abs","error_cuad", "error_porc")]
+
+errores <- aux %>% group_by(anio) %>% summarise(MAD = mean(error_abs),
+                                                   MSE = mean(error_cuad), 
+                                                   RSE = sum (error), TS = sum(error)/mean(error_abs))
+
+knitr::kable(errores, caption = "Tabla 18.Medida del error para el modelo sur en cada año.")
+```
+
+El error va dismiuyendo conforma avanza el tiempo. Es decir, el error más grande corresponde a la estimación de 1994, año en el que la correlación entre residuales es menor lo que podría estar influenciando sobre la regresión SUR.
+
+### Segunda estimación del PIB municipal.
+
+Ahora que se tienen los coeficientes de regresión a escala estatal para la función de Cobb-Douglas, a través del método Sur, se suopne que dichos coeficientes también son válidos para el cálculo del pib con la misma función pero a escala municipal. Los resultados de dicha estimación se presentan en la siguiente tabla que continene el resumen estadísitico del $pib_{mun,t} = \hat{a}_{t} + \hat{\alpha}_{1,t}pbt_{mun,t} + \hat{\alpha}_2{t}pot_{mun,t}$.
+
+```{r}
+#sur_regression 173:193
+###################################################################################################
+#Estimación del pib municipal 
+
+#1.Borramos objetos
+rm(list = c("aux","errores","rsur","sur", "anio"))
+
+#2. Cruzamos el cuadro de resultado con la base_mlw (municipal)
+aux <- merge(base_mlw, resultado, by ="anio", all=T)
+
+#3. Quitamos municipios con inf o NAN
+aux <- subset(aux, is.na(aux$pbt)== F)
+aux <- subset(aux, is.infinite(aux$pbt) == F)
+
+#4. calculamos el pib = ln(wi)
+aux$pib = aux$a +(aux$alpha_1*aux$pbt) + (aux$alpha_2*aux$pot)
+
+#Sacamos estadística de resumen
+
+resumen <-aux %>% group_by(anio) %>% summarise(min=min(pib, na.rm = TRUE), Q1 =quantile(pib, na.rm = TRUE)[[2]], 
+                                                       mediana = median(pib,na.rm = TRUE), media=mean(pib, na.rm = TRUE),
+                                                       Q3= quantile(pib, na.rm=TRUE)[[4]],
+                                                       max = max(pib,na.rm=TRUE))
+
+knitr::kable(resumen, caption = "Tabla 19.Estadística resumen de la estimación del pib municial por año.")
+
+
+```
+
+También se presenta la visualización del pib municipal estimado para cada ño.
+
+```{r}
+#sur_regression 195:200
+ggplot(aux, aes(x=as.factor(anio), y=pib, color=as.factor(anio)))+
+  geom_boxplot()+
+  xlab("Año")+
+  ylab("pib municipal")+
+  ggtitle("Gráficas de cajas de la estimación del pib municipal")+
+  theme(legend.position = "none")
+```
+
+Se observa que el pib municipal tiene una distribución simétrica alrededor de la mediana. También, que algunos municipios tienen un valor del pib muy alto, pero no cercano a cero. Otra observación que puede resultar de interés es que de 1994 parece que el pib disminuye y en 2209 y 2014 parece mejorar. Además las cajas parece que se vuelven más anchas con el paso del tiempo.
+
+Ahora que se conoce el pib, se calcula $w_{i}$, que está dado por:
+
+$$pib_{mun,j,t} = ln(w_{mun,j,t}),$$
+es decir, se aplica la exponencial,
+
+$$exp(pib_{mun,j,t}) = w_{mun, j,t},$$
+donde $w_{mun,j,t}$ está dado por:
+
+$$ w_{j,t} = \frac{PIB_{mun,j,t}}{max(PIB_{mun,t}^{i})},$$
+con $max(PIB_{mun,t}^{i})$ el PIB municipal máximo del estado j-ésimo y j el número de municipios del estado i-ésimo. Es importante notar que $max(PIB_{mun,t}^{i})$ es una cantidad desconocida que debe encontrarse a partir de la estimación de los w's. Para ello se observa que:
+
+$$\sum_{j}w_{j,t} = \sum_{j}\frac{PIB_{mun,j,t}}{max(PIB_{mun,t}^{i})} = \frac{1}{max(PIB_{mun,t}^{i})}(\sum_{j}PIB_{mun,j,t}) = \frac{1}{max(PIB_{mun,t}^{i})}(PIB_{estatal,i,t}).$$
+
+Es decir, el PIB máximo a escala municipal, para cada año y estado, estará dado por:
+
+$$max(PIB_{mun,t}^{i}) = \frac{PIB_{estatal,i,t}}{\sum_{j}w_{j,t}}.$$
+Las estimaciones para el máximo se presentan a continuación.
+
+```{r}
+#sur_regresion 202:259
+##############################################################################################
+#5. Calculamos wi=Exp(pib_i)
+aux$wi = exp(aux$pib)
+
+#6. Se calcula la suma por año y estado de los wi
+aux2 <- aux %>% group_by(anio, id_edo) %>% summarise(suma_wi = sum(wi, na.rm = T))
+
+#7. cRUZAMOS CON EL DEL PIB REAL
+aux2 <- merge(estados, aux2, by =c("anio", "id_edo"), all = T)
+
+#8. Sacamos el pib municipal máximo
+aux2$pib_mun_max <- aux2$PIB_estatal/aux2$suma_wi
+
+#Arreglamos para presentación
+lista <- list()
+
+#vector de tiempo
+target <- unique(aux2$anio)
+
+for (i in 1:length(target)) {
+  aux3 <- subset(aux2, aux2$anio == target[[i]])
+  names(aux3)[4] <- paste(names(aux3)[4], target[[i]], sep="-")
+  names(aux3)[5] <- paste(names(aux3)[5], target[[i]], sep="-")
+  names(aux3)[6] <- paste(names(aux3)[6], target[[i]], sep="-")
+  lista[[i]] <- aux3
+  
+}
+
+#Unimos
+resumen <- merge(lista[[1]], lista[[2]], by ="id_edo", all = T)
+#lIMPIAMOS
+resumen <- resumen[,c("id_edo","Entidad.x.x", "PIB_estatal-1994", "suma_wi-1994", "pib_mun_max-1994",
+                      "PIB_estatal-1999", "suma_wi-1999", "pib_mun_max-1999")]
+
+#Unimos
+resumen <- merge(resumen, lista[[3]], by ="id_edo", all = T)
+#lIMPIAMOS
+resumen <- resumen[,c("id_edo","Entidad.x.x", "PIB_estatal-1994", "suma_wi-1994", "pib_mun_max-1994",
+                      "PIB_estatal-1999", "suma_wi-1999", "pib_mun_max-1999", "PIB_estatal-2004",
+                      "suma_wi-2004",  "pib_mun_max-2004")]
+
+#Unimos
+resumen <- merge(resumen, lista[[4]], by ="id_edo", all = T)
+#lIMPIAMOS
+resumen <- resumen[,c("id_edo","Entidad.x.x", "PIB_estatal-1994", "suma_wi-1994", "pib_mun_max-1994",
+                      "PIB_estatal-1999", "suma_wi-1999", "pib_mun_max-1999", "PIB_estatal-2004",
+                      "suma_wi-2004",  "pib_mun_max-2004", "PIB_estatal-2009", "suma_wi-2009", 
+                      "pib_mun_max-2009")]
+
+#Unimos
+resumen <- merge(resumen, lista[[5]], by ="id_edo", all = T)
+#lIMPIAMOS
+resumen <- resumen[,c("id_edo","Entidad.x.x", "PIB_estatal-1994", "suma_wi-1994", "pib_mun_max-1994",
+                      "PIB_estatal-1999", "suma_wi-1999", "pib_mun_max-1999", "PIB_estatal-2004",
+                      "suma_wi-2004",  "pib_mun_max-2004", "PIB_estatal-2009", "suma_wi-2009", 
+                      "pib_mun_max-2009","PIB_estatal-2014", "suma_wi-2014" , "pib_mun_max-2014")]
+
+names(resumen)[2] <- "Entidad"
+
+knitr::kable(resumen, caption = "Tabla 20.Estimación del PIB municipal máximo por entidad y año.")
+
+
+```
+
+Una vez que se ha estimado el PIB municipal máximo para cada entidad y para cada año se calcula el PIB municipal que está dado por:
+
+$$PIB_{mun,j,t}^{i} = w_{mun,j,t}*max(PIB_{mun,t}^{i})$$
+En la siguiente tabla se presenta el resumen estadístico del PIB municipal por año.
+
+```{r}
+#sur_regression 262:283
+#Calculo del PIBmun = wi*max(PIB_mun)
+
+#Borramos objetos
+rm(list=c("aux3", "i" , "lista", "res_sur", "resultado", "resumen", "target"))
+
+#Limpiamos aux2 que contiene los máximos del PIB mun
+aux2 <- aux2[,c("anio", "id_edo", "pib_mun_max")]
+
+#Unimos con aux que es donde tenemos todas las estimaciones
+aux <- merge(aux, aux2, by=c("anio", "id_edo"), all = T)
+
+#Borramos objetos
+rm(list = c("aux2"))
+
+#Calculamos el PIBmun
+aux$PIB_mun <- aux$wi*aux$pib_mun_max
+
+#Sacamos estadísitica de resumen
+resumen <- aux %>% group_by(anio) %>% summarise(min=min(PIB_mun, na.rm = TRUE), Q1 =quantile(PIB_mun, na.rm = TRUE)[[2]], 
+                                                 mediana = median(PIB_mun,na.rm = TRUE), media=mean(PIB_mun, na.rm = TRUE),
+                                                 Q3= quantile(PIB_mun, na.rm=TRUE)[[4]],
+                                                 max = max(PIB_mun,na.rm=TRUE))
+
+knitr::kable(resumen, caption = "Tabla 21.Resumen estadístico de la estimación del PIB municipal por año.")
+```
+
+Finalmente, al igual que en el caso de la primera estimación calculamos el error como:
+
+$$error_{i,t} = PIB_{estatal,i,t} - \sum_{j}\hat{PIB}_{mun,j,t}^{i}.$$
+Así, a partir de la definición del error definimos la métrica del error de la estimación municipal como:
+
+* Error absoluto medio municipal (Mean absolute deviation (MAD))
+
+$$ MAD_{m} = \frac{1}{n}\sum_{i=1}^{n}|error_{i,t}|,$$
+con $n$ el número de observaciones (entidades).
+
+* Error cuadrático medio municipal (Mean squared error (MSE))
+
+$$ MSE_{m} = \frac{1}{n}\sum_{i=1}^{n}(error_{i,t})^{2}.$$
+
+* La suma corrida del error (Running sum error RSE)
+
+$$ RSE_{m} = \sum_{i=1}^{n}(error_{i,t})$$
+
+* Señal de rastreo (tracking sum TS)
+
+$$ TS_{m} = \frac{RSE_{m}}{MAD_{m}} $$
+
+A continuación, se presenta una tabla con dichas métricas por año.
+
+```{r}
+#Métricas del error
+#borramos cosas
+rm(list = c("aux2", "base_elw", "base_mlw", "pib_mun_est","resumen"))
+
+#Sacamos la suma por entidad
+suma <- aux %>% group_by(anio, id_edo) %>% summarise(PIB_ent_est = sum(PIB_mun, na.rm = T))
+
+#uNIMOS CON ESTADOS (EL PIB REAL)
+suma <- merge(estados, suma, by =c("anio", "id_edo"), all=T)
+
+#Sacamos el error
+suma$error <- suma$PIB_estatal - suma$PIB_ent_est
+suma$error_abs <- abs(suma$error)
+suma $error_2 <- suma$error ** 2
+
+#Sacamos la métrica
+errores <- suma %>% group_by(anio) %>% summarise(MAD = mean(error_abs),
+                                                MSE = mean(error_2), 
+                                                RSE = sum (error), TS = sum(error)/mean(error_abs))
+
+knitr::kable(errores, caption = "Tabla 22.Métrica del error para la estimación municipal.")
+
+rm(list = c("aux", "errores", "estados", "suma"))
+
+```
+
+Se puede notar que los valores de las métricas son muy pequeños, lo que habla de una buena estimación. Sin embargo, esto se puede deber a que se utiliza el PIB estatal real para estimar el PIB municipal máximo. Es decir, si se usa la estimación del PIB estatal esta estimación podría cambiar.
+
+## Estimaciones con datos tipo panel
+Los datos de panel brindan información sobre el comportamiento individual, tanto entre individuos como a lo largo del tiempo; tienen dimensiones transversales y de series de tiempo. Este tipo de datos incluyen N individuos observados en T períodos de tiempo regulares. En  este caso se trata de datos tipo panel equilibrados (a escala estatal) pues se observa a todos los individuos (entidades) en todos los periodos de tiempo.  En el modelo para datos tipo panel se consideran, al menos, tres tipos de regresores:
+
+*  Regresores variables,  $x_{it}$, como el consumo anual de un producto
+
+
+*   Regresores invariantes en el tiempo  $x_{it} = x_{i}$ para todo t. Por ejemplo el género, la educación, etc.
+
+
+*  Regresores invariantes individuales $x_{it} = x_{t}$ para todo i. Este tipo de variables suelen ser tendencias temporales, o económicas como la razón de desempleo.
+
+
+Existen varios modelos para datos tipo panel, para este trabajo se usaran  dos de ellos, a saber:
+
+1.	Modelo de efectos fijos (FE)
+
+El modelo FE permite correlacionar los efectos $\alpha_{i}$ específicos de cada individuo con los regresores x. En este caso se incluyen los $\alpha_{i}$ como intersecciones. En este modelo cada individuo tiene un término de intersección diferente y los mismos parámetros de pendiente.
+
+$$y_{it}=\alpha_{i}+x_{it}\beta+u_{it}$$
+Podemos recuperar los efectos específicos individuales después de la estimación como:
+
+$$\hat{\alpha}_{i}=y_{i}-x_{i}\beta$$
+En otras palabras, los efectos específicos de cada individuo son la variación sobrante en la variable dependiente que no pueden ser explicadas por los regresores. Las variables ficticias de tiempo se pueden incluir en los regresores x.
+
+
+2.	Modelo de efectos aleatorios (RE)
+
+El modelo de ER asume que los efectos específicos de cada individuo $\alpha_{i}$ se distribuyen independientemente de los regresores. Se incluye $\alpha_{i}$ en el término de error. Cada individuo tiene los mismos parámetros de pendiente y un término de error compuesto $\epsilon_{it}=\alpha_{i} +e_{it}$, es decir:
+
+$$y_{it}= x_{it}\beta + (\alpha_{i}+e_{it}),$$
+donde $var(\epsilon_{it}) =\sigma^{2}_{\alpha}+\sigma_{\alpha}^{e}$ y $cov(\epsilon_{it},\epsilon_{is})=\sigma_{\alpha}^{2}$ así que $\rho_{\epsilon} = cor(\epsilon{it},\epsilon{is}=\sigma_{\alpha}^{2}/(\sigma_{\alpha}^{2}+ \sigma_{e}^{2})$. En este caso Rho es la correlación entre clases del error. Rho es la fracción de la varianza en el error debido a los efectos específicos de cada individuo. Se acerca a 1 si los efectos individuales dominan el error idiosincrásico.
+
+En R los modelos de datos panel están implementados en la librería plm, específicamente en la función plm. Esta función tiene argumentos similares a la función lm para regresiones lineales, sólo que se debe utilizar un arreglo de datos tipo panel, o bien un data frame pero se deben especificar los índices. Los índices hacen referencia al identificador de los individuos y al tiempo.
+
+A continuación, se presentan los resultados de la estimación por efectos fijos sobre las observaciones estatales. Los índices serán la variable id_Edo asignada por el INEGI y que toma valores de 1 a 32, junto con los años del censo económico.
+
+```{r}
+#panel_data 3:36
+#Directorio
+base_m <- "C:/Users/avalo/OneDrive/Documentos/PIB_MUNI/codigos_finales/modified_sources"
+setwd(base_m)
+
+#Llamamos a las bases de datos
+base_elw <- read.csv("estados_trans_ln.csv", header = T, stringsAsFactors = F)
+base_mlw <- read.csv("municipios_trans_ln.csv", header = T, stringsAsFactors = F)
+estados <- read.csv("estatal_millones_2013.csv", header = T, stringsAsFactors = F)
+
+#Limpiamos las bases de datos
+#Quitamos el 2019
+base_elw <- subset(base_elw, base_elw$anio != 2019)
+base_mlw <- subset(base_mlw, base_mlw$anio != 2019)
+estados <- subset(estados, estados$anio != 2019)
+
+#Quitamos columnas
+base_elw <- base_elw[,c("anio", "id_edo", "Entidad.x", "pib", "pbt", "pot")]
+base_mlw <- base_mlw[,c("anio", "id_edo", "id_mun", "Entidad", "Municipio", "pbt", "pot")]     
+estados <- estados[,c("anio", "id_edo", "Entidad.x", "PIB")]
+
+#Renombramos la columna de estados
+names(estados)[4] <- "PIB_entidad"
+
+#Llamamos a la librería para las regresiones tipo panel
+require(plm)
+
+#Modelos de efectos mixtos
+fe<-plm(pib~pbt+pot, data=base_elw, model="within",index=c("id_edo","anio"))
+
+rfe <-summary(fe)
+
+a <- as.data.frame(rfe$coefficients)
+
+frase_a <- paste("El valor de R^2 es:", rfe$r.squared, "con un p-value de", rfe$fstatistic[[4]], sep = " ")
+
+frase_a
+
+knitr::kable(a, caption = "Tabla 23.Resultados de la estimación de datos panel con efectos fijos.")
+
+```
+
+Por otro lado, en la siguiente tabla se presentan los resultados correspondientes a un modelo tipo panel de efectos aleatorios. Las etiquetas son las mismas que las del caso de efectos mixtos.
+
+```{r}
+#random effects model; the r-square value is the overall r-square 
+#In this model, grade and race were added as between-subjects/case predictors.
+
+re<-plm(pib~pbt+pot, data=base_elw, model="random",index=c("id_edo","anio"))
+
+rre <-summary(re)
+
+b <- as.data.frame(rre$coefficients)
+
+frase_b <- paste("El valor de R^2 es:", rre$r.squared, "con un p-value de:", rre$fstatistic[[4]], sep= " ")
+frase_b
+
+knitr::kable(b, caption = "Tabla 24.Resultados de la estimación de datos panel con efectos aleatorios.")
+```
+
+Se puede hacer una prueba para determinar cual de los modelos de regresión es estadísticamente correcto. Para decidir entre efectos fijos o aleatorios, se puede ejecutar un Hausmantest donde la hipótesis nula es que el modelo preferido son los efectos aleatorios frente a la alternativa los efectos fijos. Básicamente, prueba si los errores únicos están correlacionados con los regresores, la hipótesis nula es que no lo están. Con esta prueba, si el valor p es significativo (por ejemplo, <0,05), se utiliza efectos fijos, si no, se utiliza efectos aleatorios.
+
+```{r}
+#Prueba de Hausman
+phtest(fe, re)
+
+```
+
+El resultado de la prueba nos indica que el mejor modelo es el de efectos fijos. Por lo que a continuación se estiman los pib's estatales y se presentan a través de una gráfica de correlación entre el pib real y el estimado para cada año de estimación.
+
+```{r}
+#panel_data 54:
+#Borramos
+rm(list=c("fe","re","rfe","rre", "frase_a","frase_b"))
+#Calculamos el pib_estimado a escala estatal con el modelo de efectos fijos
+alpha_1 <- a[1,1]
+alpha_2 <- a[2,1]
+
+base_elw$pib_estimado <- (alpha_1*base_elw$pbt) + (alpha_2*base_elw$pot)
+
+ggplot(base_elw, aes(x=pib, y=pib_estimado))+
+  geom_point()+
+  geom_smooth(method=lm, se=FALSE, linetype="dashed",color="darkred")+
+  ggtitle("Comparación del pib con el pib estimado estatal efectos fijos")+
+  facet_wrap(~anio)
+
+```
+
+Al igual que en los casos anteriores se calcula la métrica del error y se presenta en la siguiente tabla
+
+```{r}
+##################################################################################################
+#Cálculo del error
+aux <- base_elw
+aux$error <- aux$pib- aux$pib_estimado
+aux$error_abs <- abs(aux$pib- aux$pib_estimado)
+aux$error_cuad <- (aux$pib- aux$pib_estimado)**2
+aux$error_porc <- abs((aux$pib- aux$pib_estimado)/aux$pib)
+aux <- aux[,c("anio","id_edo", "pib", "pib_estimado","error", "error_abs","error_cuad", "error_porc")]
+
+library(dplyr)
+errores <- aux %>% group_by(anio) %>% summarise(MAD = mean(error_abs),
+                                                MSE = mean(error_cuad), 
+                                                RSE = sum (error), TS = sum(error)/mean(error_abs))
+
+knitr::kable(errores, caption = "Tabla 25. Métrica del error de la estimación de datos panel con efectos aleatorios.")
+
+```
+
+
+### Tercera estimación del PIB municipal.
+
+A continuación, utilizando los coeficientes a escala estatal de estimación del modelo tipo panel de efectos fijos  para la función de Cobb-Douglas,  se supone que dichos coeficientes también son válidos para el cálculo del pib con la misma función pero a escala municipal. Los resultados de dicha estimación se presentan en la siguiente tabla que contiene el resumen estadístico del $pib_{mun,t} = \hat{a}_{t} + \hat{\alpha}_{1,t}pbt_{mun,t} + \hat{\alpha}_2{t}pot_{mun,t}$.
+
+```{r}
+#Estimación del pib municipal 
+
+#1.Borramos objetos
+rm(list = c("aux","errores","b"))
+
+#2. Creamos alpha1 y alpha2
+alpha_1 <- a[1,1]
+alpha_2 <- a[2,1]
+
+
+#3. Quitamos municipios con inf o NAN
+aux <- subset(base_mlw, is.na(base_mlw$pbt)== F)
+aux <- subset(aux, is.infinite(aux$pbt) == F)
+
+#4. calculamos el pib = ln(wi)
+aux$pib = (alpha_1*aux$pbt) + (alpha_2*aux$pot)
+
+#Sacamos estadística de resumen
+
+resumen <-aux %>% group_by(anio) %>% summarise(min=min(pib, na.rm = TRUE), Q1 =quantile(pib, na.rm = TRUE)[[2]], 
+                                               mediana = median(pib,na.rm = TRUE), media=mean(pib, na.rm = TRUE),
+                                               Q3= quantile(pib, na.rm=TRUE)[[4]],
+                                               max = max(pib,na.rm=TRUE))
+
+knitr::kable(resumen, caption = "Tabla 26. Resumen estadpsitico de las estimación del pib a escala municipal.")
+```
+
+Para completar la tabla anterior se presentan las gráficas de cajas y bigotes para las estimaciones municipales a través de los coeficientes de datos tipo panel de efectos fijos.
+
+```{r}
+ggplot(aux, aes(x=as.factor(anio), y=pib, color=as.factor(anio)))+
+  geom_boxplot()+
+  xlab("Año")+
+  ylab("pib municipal")+
+  ggtitle("Gráficas de cajas de la estimación del pib municipal")+
+  theme(legend.position = "none")
+```
+
+
+Se debe notar que las cajas presentan un ancho similar para cada año y parece que disminuye su posición respecto a y (valor del pib) y luego vuelven a subir.  También se observa la existencia de municipios cuyos valores del pib están muy separados del comportamiento del 75% de los datos en todos los años. Se observa que el pib municipal tiene una distribución simétrica alrededor de la mediana.
+
+Ahora que se conoce el pib, se calcula $w_{i}$, que está dado por:
+
+$$pib_{mun,j,t} = ln(w_{mun,j,t}),$$
+es decir, se aplica la exponencial,
+
+$$exp(pib_{mun,j,t}) = w_{mun, j,t},$$
+donde $w_{mun,j,t}$ está dado por:
+
+$$ w_{j,t} = \frac{PIB_{mun,j,t}}{max(PIB_{mun,t}^{i})},$$
+con $max(PIB_{mun,t}^{i})$ el PIB municipal máximo del estado j-ésimo y j el número de municipios del estado i-ésimo. Es importante notar que $max(PIB_{mun,t}^{i})$ es una cantidad desconocida que debe encontrarse a partir de la estimación de los w's. Para ello se observa que:
+
+$$\sum_{j}w_{j,t} = \sum_{j}\frac{PIB_{mun,j,t}}{max(PIB_{mun,t}^{i})} = \frac{1}{max(PIB_{mun,t}^{i})}(\sum_{j}PIB_{mun,j,t}) = \frac{1}{max(PIB_{mun,t}^{i})}(PIB_{estatal,i,t}).$$
+
+Es decir, el PIB máximo a escala municipal, para cada año y estado, estará dado por:
+
+$$max(PIB_{mun,t}^{i}) = \frac{PIB_{estatal,i,t}}{\sum_{j}w_{j,t}}.$$
+Las estimaciones para el máximo se presentan a continuación.
+
+```{r}
+#5. Calculamos wi=Exp(pib_i)
+aux$wi = exp(aux$pib)
+
+#6. Se calcula la suma por año y estado de los wi
+aux2 <- aux %>% group_by(anio, id_edo) %>% summarise(suma_wi = sum(wi, na.rm = T))
+
+#7. cRUZAMOS CON EL DEL PIB REAL
+aux2 <- merge(estados, aux2, by =c("anio", "id_edo"), all = T)
+
+#8. Sacamos el pib municipal máximo
+aux2$pib_mun_max <- aux2$PIB_entidad/aux2$suma_wi
+
+#Arreglamos para presentación
+lista <- list()
+
+#vector de tiempo
+target <- unique(aux2$anio)
+
+for (i in 1:length(target)) {
+  aux3 <- subset(aux2, aux2$anio == target[[i]])
+  names(aux3)[4] <- paste(names(aux3)[4], target[[i]], sep="-")
+  names(aux3)[5] <- paste(names(aux3)[5], target[[i]], sep="-")
+  names(aux3)[6] <- paste(names(aux3)[6], target[[i]], sep="-")
+  lista[[i]] <- aux3
+  
+}
+
+#Unimos
+resumen <- merge(lista[[1]], lista[[2]], by ="id_edo", all = T)
+#lIMPIAMOS
+resumen <- resumen[,c("id_edo","Entidad.x.x", "PIB_entidad-1994", "suma_wi-1994", "pib_mun_max-1994",
+                      "PIB_entidad-1999", "suma_wi-1999", "pib_mun_max-1999")]
+
+#Unimos
+resumen <- merge(resumen, lista[[3]], by ="id_edo", all = T)
+#lIMPIAMOS
+resumen <- resumen[,c("id_edo","Entidad.x.x", "PIB_entidad-1994", "suma_wi-1994", "pib_mun_max-1994",
+                      "PIB_entidad-1999", "suma_wi-1999", "pib_mun_max-1999", "PIB_entidad-2004",
+                      "suma_wi-2004",  "pib_mun_max-2004")]
+
+#Unimos
+resumen <- merge(resumen, lista[[4]], by ="id_edo", all = T)
+#lIMPIAMOS
+resumen <- resumen[,c("id_edo","Entidad.x.x", "PIB_entidad-1994", "suma_wi-1994", "pib_mun_max-1994",
+                      "PIB_entidad-1999", "suma_wi-1999", "pib_mun_max-1999", "PIB_entidad-2004",
+                      "suma_wi-2004",  "pib_mun_max-2004", "PIB_entidad-2009", "suma_wi-2009", 
+                      "pib_mun_max-2009")]
+
+#Unimos
+resumen <- merge(resumen, lista[[5]], by ="id_edo", all = T)
+#lIMPIAMOS
+resumen <- resumen[,c("id_edo","Entidad.x.x", "PIB_entidad-1994", "suma_wi-1994", "pib_mun_max-1994",
+                      "PIB_entidad-1999", "suma_wi-1999", "pib_mun_max-1999", "PIB_entidad-2004",
+                      "suma_wi-2004",  "pib_mun_max-2004", "PIB_entidad-2009", "suma_wi-2009", 
+                      "pib_mun_max-2009","PIB_entidad-2014", "suma_wi-2014" , "pib_mun_max-2014")]
+
+names(resumen)[2] <- "Entidad"
+
+knitr::kable(resumen, caption = "Tabla 27.Estimación del PIB municipal máximo por entidad y año.")
+
+
+```
+
+Una vez que se ha estimado el PIB municipal máximo para cada entidad y para cada año se calcula el PIB municipal, que está dado por:
+
+$$PIB_{mun,j,t}^{i} = w_{mun,j,t}*max(PIB_{mun,t}^{i}).$$
+
+En la siguiente tabla se presenta el resumen estadístico del PIB municipal por año.
+
+```{r}
+#Calculo del PIBmun = wi*max(PIB_mun)
+
+#Borramos objetos
+rm(list=c("aux3", "i" , "lista", "resumen", "target"))
+
+#Limpiamos aux2 que contiene los máximos del PIB mun
+aux2 <- aux2[,c("anio", "id_edo", "pib_mun_max")]
+
+#Unimos con aux que es donde tenemos todas las estimaciones
+aux <- merge(aux, aux2, by=c("anio", "id_edo"), all = T)
+
+#Borramos objetos
+rm(list = c("aux2"))
+
+#Calculamos el PIBmun
+aux$PIB_mun <- aux$wi*aux$pib_mun_max
+
+#Sacamos estadísitica de resumen
+resumen <- aux %>% group_by(anio) %>% summarise(min=min(PIB_mun, na.rm = TRUE), Q1 =quantile(PIB_mun, na.rm = TRUE)[[2]], 
+                                                mediana = median(PIB_mun,na.rm = TRUE), media=mean(PIB_mun, na.rm = TRUE),
+                                                Q3= quantile(PIB_mun, na.rm=TRUE)[[4]],
+                                                max = max(PIB_mun,na.rm=TRUE))
+
+knitr::kable(resumen, caption = "Tabla 28.Resumen estadístico de la estimación del PIB municipal por año.")
+```
+
+Finalmente, al igual que en el caso de la primera estimación calculamos el error como:
+
+$$error_{i,t} = PIB_{estatal,i,t} - \sum_{j}\hat{PIB}_{mun,j,t}^{i}.$$
+Así, a partir de la definición del error definimos la métrica del error de la estimación municipal como:
+
+* Error absoluto medio municipal (Mean absolute deviation (MAD))
+
+$$ MAD_{m} = \frac{1}{n}\sum_{i=1}^{n}|error_{i,t}|,$$
+con $n$ el número de observaciones (entidades).
+
+* Error cuadrático medio municipal (Mean squared error (MSE))
+
+$$ MSE_{m} = \frac{1}{n}\sum_{i=1}^{n}(error_{i,t})^{2}.$$
+
+* La suma corrida del error (Running sum error RSE)
+
+$$ RSE_{m} = \sum_{i=1}^{n}(error_{i,t})$$
+
+* Señal de rastreo (tracking sum TS)
+
+$$ TS_{m} = \frac{RSE_{m}}{MAD_{m}} $$
+
+A continuación, se presenta una tabla con dichas métricas por año.
+
+```{r}
+#Métricas del error
+#borramos cosas
+rm(list = c("base_elw", "base_mlw", "pib_mun_est","resumen"))
+
+#Sacamos la suma por entidad
+suma <- aux %>% group_by(anio, id_edo) %>% summarise(PIB_ent_est = sum(PIB_mun, na.rm = T))
+
+#uNIMOS CON ESTADOS (EL PIB REAL)
+suma <- merge(estados, suma, by =c("anio", "id_edo"), all=T)
+
+#Sacamos el error
+suma$error <- suma$PIB_entidad - suma$PIB_ent_est
+suma$error_abs <- abs(suma$error)
+suma $error_2 <- suma$error ** 2
+
+#Sacamos la métrica
+errores <- suma %>% group_by(anio) %>% summarise(MAD = mean(error_abs),
+                                                 MSE = mean(error_2), 
+                                                 RSE = sum (error), TS = sum(error)/mean(error_abs))
+
+
+knitr::kable(errores, caption = "Tabla 29.Métrica del error para la estimación municipal.")
+
+rm(list = c("aux", "errores", "estados", "suma","alpha_1","alpha_2") )
+
+```
+
+Se puede notar que los valores de las métricas son muy pequeños, lo que habla de una buena estimación. Sin embargo, esto se puede deber a que se utiliza el PIB estatal real para estimar el PIB municipal máximo. Es decir, si se usa la estimación del PIB estatal esta estimación podría cambiar.
+
+
+## Análisis de las estimaciones del PIB municipal
+
+Una vez que se han estimado los PIB's municipales por distintos métodos, a continuación se comparan las medias de las estimaciones quinquenales municipales por cada método. El resultado se presenta en la siguiente tabla.
+
+```{r}
+#Fijamos el directorio
+setwd("C:/Users/avalo/OneDrive/Documentos/PIB_MUNI/codigos_finales/resultados")
+
+#Llamamos las bases de datos
+pib_mun <- read.csv("pib_mun.csv", header = T, stringsAsFactors = F)
+errores <- read.csv("errores_mod.csv", header=T, stringsAsFactors = F)
+modelos <- read.csv("regresiones.csv", header = T, stringsAsFactors = F)
+
+#sACAMOS LAS MEDIAS
+
+mu <-pib_mun %>% group_by(anio) %>% 
+  summarise(media_rl= mean(PIB_mun_rl), media_sur = mean(PIB_mun_sur), media_pd = mean(PIB_mun_dp), 
+            var_rl = var(PIB_mun_rl), var_sur = var(PIB_mun_sur), var_pd = var(PIB_mun_dp), 
+            sd_rl = sd(PIB_mun_rl), sd_sur = sd(PIB_mun_sur),sd_pd = sd(PIB_mun_dp),
+            cv_rl = sd(PIB_mun_rl)/mean(PIB_mun_rl),cv_sur = sd(PIB_mun_sur)/mean(PIB_mun_sur),
+            cv_pd = sd(PIB_mun_dp)/mean(PIB_mun_dp))
+
+
+
+knitr::kable(mu, caption = "Tabla 30.Medias de las estimaciones municipales quinquenales para cada método de estimación.")
+```
+
+Aunque no hay diferencia en las medias por método de estimación en cada uno de los años se observa que la dispersión de los datos no es la misma. Sin embargo,visualmente, en los histogramas de la siguiente figura no se puede confirmar lo expuesto anteriormente.
+
+```{r}
+dato_tr <- melt(pib_mun, id.vars = 1:7)
+
+mu_nvo <-dato_tr %>% group_by(anio, variable) %>% 
+  summarise(media_pib= mean(value))
+            
+
+aux <- merge(dato_tr, mu_nvo, by=c("anio", "variable"))            
+#Generamos histogramas
+target <- unique(dato_tr$anio)
+
+ggplot(aux, aes(x=value)) + 
+  geom_histogram(colour="black", fill="white", bins=15)+
+  geom_vline(aes(xintercept=media_pib), color="blue", linetype="dashed", size=1)+
+  facet_grid(variable~anio, scales = "free_x")
+```
+
+
+Lo que si se puede afirmar de los histogramas y de los boxplots asociados a las estimaciones por cada metodología de las secciones anteriores es que la varianza y la desciación estándar están onfluencias por observaciones que se salen de la distribución de la mayoria de la población. Desde luego, esto se debe a que desde la estimación estatal se tiene valores atípicos que podría estar conduciendo la regresión.
+
+A continuación, se considera la definición más sencilla de valor atípico, es decir, se considera valor atípico a aquel  valor que sea mayor al tercel cuartil más 1.5 veces el rango intercuartílico.
+
+
+Por lo que se tendrán que contrastar las estimaciones para determinar si son estadísticamente distintas. La prueba que se realizará para contrastar las estimaciones será la de Wilcoxon para muestras relacionadas pues cada estimación se realiza con los mismos datos aunque difiere la metodología. 
+
+
+## Anexo 1
+
+Lista de municipios para los que no fue posible realizar una regresión
+
+```{r}
+#Municipios sin estimación
+#Directorios
+setwd(base_m)
+#Llamamos base estatal logaritmo(w)
+############################################################################################
+#Llamamos a la base de datos municipal a w y a ln
+base_mlw <- read.csv("municipios_trans_ln.csv", header = T, stringsAsFactors = FALSE)
+
+#Quitamos el 2019
+base_mlw <- subset(base_mlw, base_mlw$anio != 2019)
+
+#Se dejan municipios con NA'S o infinitos
+aux <- subset(base_mlw, is.na(base_mlw$pbt) == T)
+aux2 <- subset(base_mlw, is.infinite(base_mlw$pbt) ==  T)
+
+aux <- rbind.data.frame(aux, aux2)
+
+#Limpiamos cols
+municipios_sin <- aux[,c("anio", "id_edo", "id_mun", "Entidad","Municipio")]
+
+knitr::kable(municipios_sin, caption = "Tabla A1.Municipios que no disponen de estimación del PIB.")
+
+rm(list = c("aux", "aux2", "base_mlw", "municipios_sin"))
+
+```
+
+
+
+
+Arne Henningsen and Jeff D. Hamann (2007). systemfit: A Package for Estimating Systems of Simultaneous Equations in R. Journal of Statistical Software 23(4), 1-40. http://www.jstatsoft.org/v23/i04/.
+
+
+
+
+
+
